@@ -90,21 +90,3 @@ jobs:
           helm push "${package_dir}/substrate-crds-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
           helm push "${package_dir}/substrate-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
           helm push "${package_dir}/substrate-podcert-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
-
-      - name: Publish package visibility
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -o errexit -o nounset -o pipefail
-          # Packages linked to this public repository should already be public.
-          # Print the result either way so a private package is visible in the log.
-          gh api --paginate "user/packages?package_type=container&per_page=100" \
-            --jq '.[] | select(.name | startswith("substrate")) | {name,visibility}'
-          while read -r name; do
-            [ -n "${name}" ] || continue
-            encoded=${name//\//%2F}
-            gh api --method PATCH "/user/packages/container/${encoded}" \
-              -f visibility=public --jq '{name,visibility}' \
-              || echo "could not set ${name} public"
-          done < <(gh api --paginate "user/packages?package_type=container&per_page=100" \
-            --jq '.[] | select(.name | startswith("substrate")) | .name')
