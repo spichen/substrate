@@ -29,8 +29,6 @@ data:
   config.yaml: |
     # yaml-language-server: $schema=https://agentgateway.dev/schema/config
     frontendPolicies:
-      connect:
-        mode: tunnel
       accessLog:
         add:
           substrate.connect.authority: source.connectHeaders["host"]
@@ -45,19 +43,16 @@ data:
             key: /run/podidentity.podcert.ate.dev/credential-bundle.pem
             root: /run/servicedns.podcert.ate.dev/trust-bundle.pem
 
-    # Bind the CONNECT front door to the pod IP so tunnel re-entry selects
-    # the wildcard internal listener instead of this gateway again.
-    gateways:
-      egress:
-        port: 8443
-        bindAddress: $POD_IP
-        protocol: HTTPS
+    binds:
+    - port: 8443
+      tunnelProtocol: connect
+      listeners:
+      - protocol: HTTPS
         tls:
           cert: /run/servicedns.podcert.ate.dev/credential-bundle.pem
           key: /run/servicedns.podcert.ate.dev/credential-bundle.pem
           root: /run/actor-id-ca-certs/ca.crt
-
-    binds:
+        routes: []
     - mode: internal
       protocol: AUTO
       listeners:
@@ -70,8 +65,7 @@ data:
         - backends:
           - dynamic: {}
             policies:
-              backendTLS:
-                root: /etc/ssl/certs/ca-certificates.crt
+              backendTLS: {}
           policies:
             substrateEgress:
               host: {{ include "substrate.fullname" (list "api" .) }}.{{ .Release.Namespace }}.svc:443
@@ -149,10 +143,6 @@ spec:
         - -f
         - /etc/agentgateway/config.yaml
         env:
-        - name: POD_IP
-          valueFrom:
-            fieldRef:
-              fieldPath: status.podIP
         - name: RUST_LOG
           value: debug
         ports:
