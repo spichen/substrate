@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -35,8 +36,9 @@ import (
 )
 
 type runsc struct {
-	path     string
-	actorUID string
+	containers []*ateompb.Container
+	path       string
+	actorUID   string
 	// actorDirs are the actor's directories, from the request.
 	actorDirs *ateompb.ActorDirs
 	// size is the actor's declared limits.
@@ -60,6 +62,19 @@ func durableVolumeNames(spec *ateompb.WorkloadSpec) []string {
 
 // shapeSpec loads, shapes for gVisor, and saves the container's OCI spec.
 func (r *runsc) shapeSpec(containerName string) error {
+	for _, c := range r.containers {
+		if c.GetName() != containerName {
+			continue
+		}
+		for _, m := range c.GetDurableDirVolumeMounts() {
+			if m.GetSubPath() != "" {
+				return fmt.Errorf("durable sub-path cannot use the shared tmpfs")
+			}
+		}
+		if err := ocispec.PrepareSubPaths(ocispec.RuntimeMountOptions(r.actorDirs, c), filepath.Join(ociBundlePath(r.actorDirs, containerName), ocispec.SubPathDir)); err != nil {
+			return err
+		}
+	}
 	bundle := ociBundlePath(r.actorDirs, containerName)
 	spec, err := ocispec.Load(bundle)
 	if err != nil {

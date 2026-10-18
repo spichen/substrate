@@ -110,6 +110,11 @@ func ActorTemplateObject(atespace, name string) string {
 	return "actor_template:" + atespacedID(atespace, name)
 }
 
+// SharedVolumeObject formats a shared volume as an OpenFGA object string.
+func SharedVolumeObject(atespace, name string) string {
+	return "shared_volume:" + atespacedID(atespace, name)
+}
+
 // atespacedID formats the object ID of an atespaced resource as
 // "<atespace>/<name>". contextualTuples parses the atespace back out of it.
 func atespacedID(atespace, name string) string {
@@ -346,3 +351,8 @@ func modelsEqual(existing, desired *openfgav1.AuthorizationModel) bool {
 	}
 	return proto.Equal(a, b)
 }
+
+const (
+	RelationCanCreateSharedVolume = "can_create_shared_volume"
+	RelationCanListSharedVolumes  = "can_list_shared_volumes"
+)

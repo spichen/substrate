@@ -50,3 +50,8 @@ func ValidateCustom_Limits(_ context.Context, _ operation.Operation, fldPath *fi
 func ateDeepEqual[T any](a, b T) bool {
 	return resources.DeepEqual(a, b)
 }
+
+// ValidateVolumeMount checks caller-selected paths before constructing worker mounts.
+func ValidateVolumeMount(value *ateletpb.VolumeMount) field.ErrorList {
+	return resources.ValidateProjectedPath(field.NewPath("sub_path"), value.GetSubPath())
+}

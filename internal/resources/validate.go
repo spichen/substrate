@@ -26,6 +26,7 @@ import (
 
 	"github.com/agent-substrate/substrate/internal/apierror"
 	"github.com/agent-substrate/substrate/internal/proto/ateompb"
+	"github.com/agent-substrate/substrate/internal/volumepath"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -301,4 +302,15 @@ func ValidateLimit(fldPath *field.Path, name, quantity string) field.ErrorList {
 		errs = append(errs, field.Invalid(fldPath.Child("quantity"), quantity, "cpu limit must be less than 1000 cores"))
 	}
 	return errs
+}
+
+// ValidateProjectedPath accepts the volume root or a confined relative path.
+func ValidateProjectedPath(fldPath *field.Path, p string) field.ErrorList {
+	if p == "" {
+		return nil
+	}
+	if err := volumepath.ValidateProjected(p); err != nil {
+		return field.ErrorList{field.Invalid(fldPath, p, err.Error())}
+	}
+	return nil
 }

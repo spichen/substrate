@@ -305,7 +305,10 @@ func (w *ActorWorkflow) ensureVolumesDetached(ctx context.Context, actor *ateapi
 	ctx, done := stepSpan(ctx, spanName)
 	defer func() { err = done(err) }()
 
-	return detachActorVolumes(ctx, w.pluginRegistry, actor, actorTemplate, op)
+	if err := detachActorVolumes(ctx, w.pluginRegistry, actor, actorTemplate, op); err != nil {
+		return err
+	}
+	return deactivateSharedVolumes(ctx, w.store, actor)
 }
 
 // ensureSuspendedFinalized releases the actor's worker (only when it is still

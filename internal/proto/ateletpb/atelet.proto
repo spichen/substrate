@@ -293,6 +293,8 @@ message WorkloadSpec {
 message DurableDirVolume {
 }
 
+message EmptyDirVolumeSource {}
+
 message ExternalVolumeSource {
   string storage_volume_id = 1;
   string volume_type = 2;
@@ -301,6 +303,9 @@ message ExternalVolumeSource {
   // publish_context is the driver's attachment metadata for this node, which
   // the node plugin needs to complete the mount.
   map<string, string> publish_context = 4;
+
+  // Request concurrent writers through the CSI multi-node capability.
+  bool read_write_many = 5;
 }
 
 message ImageVolumeSource {
@@ -358,12 +363,20 @@ message Volume {
     ExternalVolumeSource external = 3;
     SystemInfoVolume system_info = 4;
     ImageVolumeSource image = 5;
+    EmptyDirVolumeSource empty_dir = 6;
   }
+
 }
 
 message VolumeMount {
   string name = 1;
   string mount_path = 2;
+
+  // read_only makes this bind read-only; it never grants source write access.
+  bool read_only = 3;
+
+  // sub_path is a caller-chosen directory inside the volume. Empty selects its root.
+  string sub_path = 4;
 }
 
 message Container {

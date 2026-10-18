@@ -772,6 +772,8 @@ type VolumeMount struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VolumeName    string                 `protobuf:"bytes,1,opt,name=volume_name,json=volumeName,proto3" json:"volume_name,omitempty"`
 	MountPath     string                 `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
+	ReadOnly      bool                   `protobuf:"varint,3,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	SubPath       string                 `protobuf:"bytes,4,opt,name=sub_path,json=subPath,proto3" json:"sub_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -820,6 +822,20 @@ func (x *VolumeMount) GetMountPath() string {
 	return ""
 }
 
+func (x *VolumeMount) GetReadOnly() bool {
+	if x != nil {
+		return x.ReadOnly
+	}
+	return false
+}
+
+func (x *VolumeMount) GetSubPath() string {
+	if x != nil {
+		return x.SubPath
+	}
+	return ""
+}
+
 // DurableDirVolumeMount is one durable-dir volume mounted into a container.
 type DurableDirVolumeMount struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -828,6 +844,8 @@ type DurableDirVolumeMount struct {
 	VolumeName string `protobuf:"bytes,1,opt,name=volume_name,json=volumeName,proto3" json:"volume_name,omitempty"`
 	// mount_path is where the container sees the volume.
 	MountPath     string `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
+	ReadOnly      bool   `protobuf:"varint,3,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	SubPath       string `protobuf:"bytes,4,opt,name=sub_path,json=subPath,proto3" json:"sub_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -876,6 +894,20 @@ func (x *DurableDirVolumeMount) GetMountPath() string {
 	return ""
 }
 
+func (x *DurableDirVolumeMount) GetReadOnly() bool {
+	if x != nil {
+		return x.ReadOnly
+	}
+	return false
+}
+
+func (x *DurableDirVolumeMount) GetSubPath() string {
+	if x != nil {
+		return x.SubPath
+	}
+	return ""
+}
+
 // SystemInfoVolumeMount is one system-info volume mounted (read-only) into a
 // container. Unlike durable-dir volumes, system-info contents are generated
 // by atelet on every Run/Restore and are never captured into snapshots.
@@ -886,6 +918,8 @@ type SystemInfoVolumeMount struct {
 	VolumeName string `protobuf:"bytes,1,opt,name=volume_name,json=volumeName,proto3" json:"volume_name,omitempty"`
 	// mount_path is where the container sees the volume.
 	MountPath     string `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
+	ReadOnly      bool   `protobuf:"varint,3,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	SubPath       string `protobuf:"bytes,4,opt,name=sub_path,json=subPath,proto3" json:"sub_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -934,6 +968,20 @@ func (x *SystemInfoVolumeMount) GetMountPath() string {
 	return ""
 }
 
+func (x *SystemInfoVolumeMount) GetReadOnly() bool {
+	if x != nil {
+		return x.ReadOnly
+	}
+	return false
+}
+
+func (x *SystemInfoVolumeMount) GetSubPath() string {
+	if x != nil {
+		return x.SubPath
+	}
+	return ""
+}
+
 // ImageVolumeMount is one image volume mounted into a container. ateom uses
 // these to construct the container's volume mounts — each names the volume
 // and its destination path.
@@ -942,7 +990,11 @@ type ImageVolumeMount struct {
 	// volume_name is the name the ActorTemplate gave the volume.
 	VolumeName string `protobuf:"bytes,1,opt,name=volume_name,json=volumeName,proto3" json:"volume_name,omitempty"`
 	// mount_path is where the container sees the volume.
-	MountPath     string `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
+	MountPath string `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
+	// read_only makes this bind read-only; it never grants source write access.
+	ReadOnly bool `protobuf:"varint,3,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	// sub_path is a caller-chosen directory inside the volume. Empty selects its root.
+	SubPath       string `protobuf:"bytes,4,opt,name=sub_path,json=subPath,proto3" json:"sub_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -987,6 +1039,20 @@ func (x *ImageVolumeMount) GetVolumeName() string {
 func (x *ImageVolumeMount) GetMountPath() string {
 	if x != nil {
 		return x.MountPath
+	}
+	return ""
+}
+
+func (x *ImageVolumeMount) GetReadOnly() bool {
+	if x != nil {
+		return x.ReadOnly
+	}
+	return false
+}
+
+func (x *ImageVolumeMount) GetSubPath() string {
+	if x != nil {
+		return x.SubPath
 	}
 	return ""
 }
@@ -1949,27 +2015,35 @@ const file_ateom_proto_rawDesc = "" +
 	"\x19durable_dir_volume_mounts\x18\x03 \x03(\v2\x1c.ateom.DurableDirVolumeMountR\x16durableDirVolumeMounts\x12>\n" +
 	"\x11csi_volume_mounts\x18\x04 \x03(\v2\x12.ateom.VolumeMountR\x0fcsiVolumeMounts\x12W\n" +
 	"\x19system_info_volume_mounts\x18\x05 \x03(\v2\x1c.ateom.SystemInfoVolumeMountR\x16systemInfoVolumeMounts\x12G\n" +
-	"\x13image_volume_mounts\x18\x06 \x03(\v2\x17.ateom.ImageVolumeMountR\x11imageVolumeMounts\"M\n" +
+	"\x13image_volume_mounts\x18\x06 \x03(\v2\x17.ateom.ImageVolumeMountR\x11imageVolumeMounts\"\x85\x01\n" +
 	"\vVolumeMount\x12\x1f\n" +
 	"\vvolume_name\x18\x01 \x01(\tR\n" +
 	"volumeName\x12\x1d\n" +
 	"\n" +
-	"mount_path\x18\x02 \x01(\tR\tmountPath\"W\n" +
+	"mount_path\x18\x02 \x01(\tR\tmountPath\x12\x1b\n" +
+	"\tread_only\x18\x03 \x01(\bR\breadOnly\x12\x19\n" +
+	"\bsub_path\x18\x04 \x01(\tR\asubPath\"\x8f\x01\n" +
 	"\x15DurableDirVolumeMount\x12\x1f\n" +
 	"\vvolume_name\x18\x01 \x01(\tR\n" +
 	"volumeName\x12\x1d\n" +
 	"\n" +
-	"mount_path\x18\x02 \x01(\tR\tmountPath\"W\n" +
+	"mount_path\x18\x02 \x01(\tR\tmountPath\x12\x1b\n" +
+	"\tread_only\x18\x03 \x01(\bR\breadOnly\x12\x19\n" +
+	"\bsub_path\x18\x04 \x01(\tR\asubPath\"\x8f\x01\n" +
 	"\x15SystemInfoVolumeMount\x12\x1f\n" +
 	"\vvolume_name\x18\x01 \x01(\tR\n" +
 	"volumeName\x12\x1d\n" +
 	"\n" +
-	"mount_path\x18\x02 \x01(\tR\tmountPath\"R\n" +
+	"mount_path\x18\x02 \x01(\tR\tmountPath\x12\x1b\n" +
+	"\tread_only\x18\x03 \x01(\bR\breadOnly\x12\x19\n" +
+	"\bsub_path\x18\x04 \x01(\tR\asubPath\"\x8a\x01\n" +
 	"\x10ImageVolumeMount\x12\x1f\n" +
 	"\vvolume_name\x18\x01 \x01(\tR\n" +
 	"volumeName\x12\x1d\n" +
 	"\n" +
-	"mount_path\x18\x02 \x01(\tR\tmountPath\"g\n" +
+	"mount_path\x18\x02 \x01(\tR\tmountPath\x12\x1b\n" +
+	"\tread_only\x18\x03 \x01(\bR\breadOnly\x12\x19\n" +
+	"\bsub_path\x18\x04 \x01(\tR\asubPath\"g\n" +
 	"\vWakeupProbe\x12/\n" +
 	"\bhttp_get\x18\x01 \x01(\v2\x14.ateom.HTTPGetActionR\ahttpGet\x12'\n" +
 	"\x0ftimeout_seconds\x18\x02 \x01(\x05R\x0etimeoutSeconds\"7\n" +

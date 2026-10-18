@@ -36,8 +36,8 @@ func initialActorVolumes(ctx context.Context, scLister storagev1listers.StorageC
 	}
 	var volumes []*ateapipb.ExternalVolume
 	for _, vol := range template.GetVolumes() {
-		if vol.GetExternalVolumeTemplate() != nil {
-			scName := vol.GetExternalVolumeTemplate().GetStorageClassName()
+		if vol.GetExternal().GetTemplate() != nil {
+			scName := vol.GetExternal().GetTemplate().GetStorageClassName()
 			sc, err := scLister.Get(scName)
 			if err != nil {
 				if k8serrors.IsNotFound(err) {
@@ -74,6 +74,11 @@ func createActorVolumes(ctx context.Context, registry VolumePluginRegistry, scLi
 	for idx, vol := range volumesToCreate {
 		currentIdx = idx
 
+		if vol.GetSharedVolumeName() != "" {
+			resultVolumes = append(resultVolumes, vol)
+			continue
+		}
+
 		var specVol *ateapipb.Volume
 		volName := vol.GetVolumeName()
 		for _, tVol := range template.GetVolumes() {
@@ -82,7 +87,7 @@ func createActorVolumes(ctx context.Context, registry VolumePluginRegistry, scLi
 				break
 			}
 		}
-		if specVol == nil || specVol.GetExternalVolumeTemplate() == nil {
+		if specVol == nil || specVol.GetExternal().GetTemplate() == nil {
 			return resultVolumes, apierror.NotFound("volume %q not found in template", volName)
 		}
 
@@ -100,7 +105,7 @@ func createActorVolumes(ctx context.Context, registry VolumePluginRegistry, scLi
 
 		actVolID := actorVolumeID(actorUID, volName)
 
-		scName := specVol.GetExternalVolumeTemplate().GetStorageClassName()
+		scName := specVol.GetExternal().GetTemplate().GetStorageClassName()
 		sc, err := scLister.Get(scName)
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
@@ -120,7 +125,7 @@ func createActorVolumes(ctx context.Context, registry VolumePluginRegistry, scLi
 
 		resp, volErr := plugin.CreateVolume(ctx, volume.CreateVolumeRequest{
 			Name:       actVolID,
-			Capacity:   specVol.GetExternalVolumeTemplate().GetCapacity(),
+			Capacity:   specVol.GetExternal().GetTemplate().GetCapacity(),
 			Parameters: sc.Parameters,
 		})
 		if volErr != nil {
@@ -138,13 +143,16 @@ func createActorVolumes(ctx context.Context, registry VolumePluginRegistry, scLi
 	return resultVolumes, nil
 }
 
-// deleteActorVolumes deletes all external volumes in the list.
+// deleteActorVolumes deletes the external volumes the actor owns.
 func deleteActorVolumes(ctx context.Context, registry VolumePluginRegistry, actorUID string, volumes []*ateapipb.ExternalVolume) error {
 	if actorUID == "" {
 		return errors.New("actorUID is required")
 	}
 	var errs []error
 	for _, vol := range volumes {
+		if vol.GetSharedVolumeName() != "" {
+			continue
+		}
 		volID := vol.GetStorageVolumeId()
 		if volID == "" {
 			// If the volume hasn't been successfully created yet, it's possible
@@ -221,6 +229,11 @@ func detachActorVolumes(ctx context.Context, registry VolumePluginRegistry, acto
 	// Collect errors for all volumes to detach, but continue processing so we attempt to detach all volumes.
 	var errs []error
 	for _, vol := range volumesToDetach {
+		// RWX is restricted to drivers without controller attachment. Never
+		// detach another actor's shared storage, including during failed resume.
+		if vol.GetReadWriteMany() {
+			continue
+		}
 		// StorageVolumeId is only populated once the volume is provisioned.
 		// Skip volumes that were never created (e.g. failed during PENDING state).
 		if vol.GetStorageVolumeId() == "" {

@@ -31,6 +31,16 @@ import (
 
 func (s *AteomHerder) mountExternalVolumes(ctx context.Context, actorUID string, volumes []*ateletpb.Volume) error {
 	for _, vol := range volumes {
+		if vol.GetEmptyDir() != nil {
+			hostPath := ateletpath.VolumeHostPath(actorUID, vol.GetName())
+			if err := os.RemoveAll(hostPath); err != nil {
+				return err
+			}
+			if err := os.MkdirAll(hostPath, 0o750); err != nil {
+				return err
+			}
+			continue
+		}
 		ext := vol.GetExternal()
 		if ext == nil {
 			continue
@@ -49,9 +59,20 @@ func (s *AteomHerder) mountExternalVolumes(ctx context.Context, actorUID string,
 			TargetPath:     hostPath,
 			VolumeContext:  ext.GetVolumeContext(),
 			PublishContext: ext.GetPublishContext(),
+			ReadWriteMany:  ext.GetReadWriteMany(),
 		}); err != nil {
 			return fmt.Errorf("failed to mount volume %q to %q: %w", ext.GetStorageVolumeId(), hostPath, err)
 		}
+	}
+	return nil
+}
+
+func resetEmptyDir(hostPath string) error {
+	if err := os.RemoveAll(hostPath); err != nil {
+		return fmt.Errorf("failed to clear empty dir %q: %w", hostPath, err)
+	}
+	if err := os.MkdirAll(hostPath, 0o750); err != nil {
+		return fmt.Errorf("failed to create empty dir %q: %w", hostPath, err)
 	}
 	return nil
 }
@@ -72,7 +93,7 @@ func (s *AteomHerder) unmountExternalVolumes(ctx context.Context, actorUID strin
 			errs = append(errs, fmt.Errorf("failed to get volume plugin for %q (volume %q): %w", ext.GetVolumeType(), ext.GetStorageVolumeId(), err))
 			continue
 		}
-		if err := plugin.UnmountVolume(ctx, ext.GetStorageVolumeId(), hostPath); err != nil {
+		if err := plugin.UnmountVolume(ctx, volume.UnmountVolumeRequest{VolumeID: ext.GetStorageVolumeId(), TargetPath: hostPath, ReadWriteMany: ext.GetReadWriteMany()}); err != nil {
 			if status.Code(err) == codes.NotFound || errors.Is(err, os.ErrNotExist) {
 				slog.WarnContext(ctx, "Volume not found during unmount, assuming already unmounted", slog.String("volume_id", ext.GetStorageVolumeId()), slog.Any("error", err))
 			} else {

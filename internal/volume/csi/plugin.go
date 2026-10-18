@@ -59,9 +59,12 @@ type Plugin struct {
 	// capsMu guards controllerCaps and nodeCaps. The maps are built by
 	// InitControllerCapabilities and InitNodeCapabilities, and an RPC is
 	// disabled once the driver returns Unimplemented for it.
-	capsMu         sync.RWMutex
-	controllerCaps map[csi.ControllerServiceCapability_RPC_Type]bool
-	nodeCaps       map[csi.NodeServiceCapability_RPC_Type]bool
+	// RWX safety requires successful discovery, not optimistic RPC fallback.
+	rwxControllerSafe bool
+	rwxNodeSafe       bool
+	capsMu            sync.RWMutex
+	controllerCaps    map[csi.ControllerServiceCapability_RPC_Type]bool
+	nodeCaps          map[csi.NodeServiceCapability_RPC_Type]bool
 }
 
 // Ensure Plugin implements volume.VolumePluginControlPlane and VolumePluginWorkerPlane
@@ -121,6 +124,7 @@ func (p *Plugin) InitControllerCapabilities(ctx context.Context) {
 			caps[rpc.GetType()] = true
 		}
 	}
+	rwxSafe := err == nil && !caps[csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME]
 	if err != nil || len(caps) == 0 {
 		slog.WarnContext(ctx, "CSI ControllerGetCapabilities failed or reported no capabilities; assuming all controller RPCs are supported", slog.Any("error", err))
 		for v := range csi.ControllerServiceCapability_RPC_Type_name {
@@ -132,6 +136,7 @@ func (p *Plugin) InitControllerCapabilities(ctx context.Context) {
 	p.capsMu.Lock()
 	defer p.capsMu.Unlock()
 	p.controllerCaps = caps
+	p.rwxControllerSafe = rwxSafe
 }
 
 // InitNodeCapabilities queries and caches NodeGetCapabilities from the driver.
@@ -144,6 +149,7 @@ func (p *Plugin) InitNodeCapabilities(ctx context.Context) {
 			caps[rpc.GetType()] = true
 		}
 	}
+	rwxSafe := err == nil && !caps[csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME]
 	if err != nil || len(caps) == 0 {
 		slog.WarnContext(ctx, "CSI NodeGetCapabilities failed or reported no capabilities; assuming all node RPCs are supported", slog.Any("error", err))
 		for v := range csi.NodeServiceCapability_RPC_Type_name {
@@ -155,6 +161,7 @@ func (p *Plugin) InitNodeCapabilities(ctx context.Context) {
 	p.capsMu.Lock()
 	defer p.capsMu.Unlock()
 	p.nodeCaps = caps
+	p.rwxNodeSafe = rwxSafe
 }
 
 // DriverName returns the driver name obtained from the CSI plugin.
@@ -166,8 +173,24 @@ func (p *Plugin) DriverName(ctx context.Context) (string, error) {
 	return resp.GetName(), nil
 }
 
+// checkRWXController rejects drivers whose per-node attachments would need
+// persistent reference tracking across actor workflows.
+func (p *Plugin) checkRWXController() error {
+	p.capsMu.RLock()
+	defer p.capsMu.RUnlock()
+	if !p.rwxControllerSafe {
+		return fmt.Errorf("READ_WRITE_MANY requires successful controller capability discovery and a driver without PUBLISH_UNPUBLISH_VOLUME")
+	}
+	return nil
+}
+
 // CreateVolume maps to CSI Controller CreateVolume.
 func (p *Plugin) CreateVolume(ctx context.Context, req volume.CreateVolumeRequest) (volume.CreateVolumeResponse, error) {
+	if req.ReadWriteMany {
+		if err := p.checkRWXController(); err != nil {
+			return volume.CreateVolumeResponse{}, err
+		}
+	}
 	qty, err := resource.ParseQuantity(req.Capacity)
 	if err != nil {
 		return volume.CreateVolumeResponse{}, fmt.Errorf("failed to parse capacity %q: %w", req.Capacity, err)
@@ -179,7 +202,7 @@ func (p *Plugin) CreateVolume(ctx context.Context, req volume.CreateVolumeReques
 		CapacityRange: &csi.CapacityRange{
 			RequiredBytes: capBytes,
 		},
-		VolumeCapabilities: getStandardCapabilities(),
+		VolumeCapabilities: getStandardCapabilities(req.ReadWriteMany),
 		Parameters:         req.Parameters,
 	}
 
@@ -213,6 +236,9 @@ func (p *Plugin) DeleteVolume(ctx context.Context, volumeID string) error {
 
 // AttachVolume maps to CSI Controller ControllerPublishVolume.
 func (p *Plugin) AttachVolume(ctx context.Context, req volume.AttachVolumeRequest) (volume.AttachVolumeResponse, error) {
+	if req.ReadWriteMany {
+		return volume.AttachVolumeResponse{}, p.checkRWXController()
+	}
 	if !p.SupportsControllerCapability(csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME) {
 		slog.DebugContext(ctx, "Driver does not support ControllerPublishVolume; skipping attach", slog.String("volume_id", req.VolumeID), slog.String("node", req.Node))
 		return volume.AttachVolumeResponse{}, nil
@@ -221,7 +247,7 @@ func (p *Plugin) AttachVolume(ctx context.Context, req volume.AttachVolumeReques
 	csiReq := &csi.ControllerPublishVolumeRequest{
 		VolumeId:         req.VolumeID,
 		NodeId:           req.Node,
-		VolumeCapability: getStandardCapabilities()[0], // Use primary capability
+		VolumeCapability: getStandardCapabilities(req.ReadWriteMany)[0], // Use primary capability
 		Readonly:         false,
 	}
 
@@ -265,16 +291,27 @@ func (p *Plugin) DetachVolume(ctx context.Context, volumeID string, node string)
 // MountVolume maps to CSI Node NodePublishVolume.
 // It also handles NodeStageVolume staging if required by the driver.
 func (p *Plugin) MountVolume(ctx context.Context, req volume.MountVolumeRequest) error {
-	stagingPath, err := p.stageVolume(ctx, req)
-	if err != nil {
-		return err
+	var stagingPath string
+	if req.ReadWriteMany {
+		p.capsMu.RLock()
+		safe := p.rwxNodeSafe
+		p.capsMu.RUnlock()
+		if !safe {
+			return fmt.Errorf("READ_WRITE_MANY requires successful node capability discovery and a driver without STAGE_UNSTAGE_VOLUME")
+		}
+	} else {
+		var err error
+		stagingPath, err = p.stageVolume(ctx, req)
+		if err != nil {
+			return err
+		}
 	}
 
 	csiReq := &csi.NodePublishVolumeRequest{
 		VolumeId:          req.VolumeID,
 		StagingTargetPath: stagingPath,
 		TargetPath:        req.TargetPath,
-		VolumeCapability:  getStandardCapabilities()[0],
+		VolumeCapability:  getStandardCapabilities(req.ReadWriteMany)[0],
 		Readonly:          false,
 		VolumeContext:     req.VolumeContext,
 		PublishContext:    req.PublishContext,
@@ -301,7 +338,7 @@ func (p *Plugin) stageVolume(ctx context.Context, req volume.MountVolumeRequest)
 	csiReq := &csi.NodeStageVolumeRequest{
 		VolumeId:          req.VolumeID,
 		StagingTargetPath: stagingPath,
-		VolumeCapability:  getStandardCapabilities()[0], // Use primary capability
+		VolumeCapability:  getStandardCapabilities(req.ReadWriteMany)[0], // Use primary capability
 		VolumeContext:     req.VolumeContext,
 		PublishContext:    req.PublishContext,
 	}
@@ -321,7 +358,8 @@ func (p *Plugin) stageVolume(ctx context.Context, req volume.MountVolumeRequest)
 
 // UnmountVolume maps to CSI Node NodeUnpublishVolume.
 // It also handles NodeUnstageVolume if staging was used.
-func (p *Plugin) UnmountVolume(ctx context.Context, volumeID string, targetPath string) error {
+func (p *Plugin) UnmountVolume(ctx context.Context, request volume.UnmountVolumeRequest) error {
+	volumeID, targetPath := request.VolumeID, request.TargetPath
 	req := &csi.NodeUnpublishVolumeRequest{
 		VolumeId:   volumeID,
 		TargetPath: targetPath,
@@ -331,6 +369,9 @@ func (p *Plugin) UnmountVolume(ctx context.Context, volumeID string, targetPath 
 		return fmt.Errorf("CSI NodeUnpublishVolume failed: %w", err)
 	}
 
+	if request.ReadWriteMany {
+		return nil
+	}
 	return p.unstageVolume(ctx, volumeID)
 }
 
@@ -366,14 +407,16 @@ func removeStagingDir(ctx context.Context, stagingPath string) {
 	}
 }
 
-// Helper to provide standard capabilities for general volume operations.
-// TODO: Support and expose different volume access modes (e.g. ReadWriteMany, ReadOnlyMany)
-// instead of hardcoding SingleNodeWriter.
-func getStandardCapabilities() []*csi.VolumeCapability {
+// getStandardCapabilities describes filesystem access for provisioning and publishing.
+func getStandardCapabilities(readWriteMany bool) []*csi.VolumeCapability {
+	mode := csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER
+	if readWriteMany {
+		mode = csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER
+	}
 	return []*csi.VolumeCapability{
 		{
 			AccessMode: &csi.VolumeCapability_AccessMode{
-				Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+				Mode: mode,
 			},
 			AccessType: &csi.VolumeCapability_Mount{
 				Mount: &csi.VolumeCapability_MountVolume{},

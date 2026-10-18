@@ -20,6 +20,7 @@ import (
 
 	"github.com/agent-substrate/substrate/internal/imagecache"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
+	"github.com/agent-substrate/substrate/internal/proto/ateompb"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -255,5 +256,56 @@ func TestBuild_ResourcesApplied(t *testing.T) {
 	}
 	if *spec.Linux.Resources.Memory.Limit != 67108864 {
 		t.Errorf("Memory.Limit = %d, want 67108864", *spec.Linux.Resources.Memory.Limit)
+	}
+}
+
+func TestBuild_PerMountOptions(t *testing.T) {
+	d := &ateompb.ActorDirs{OciBundleDir: "/bundles", DurableDirVolumeMountsDir: "/durable", VolumesDir: "/volumes", SystemInfoVolumeRootsDir: "/sysinfo"}
+	o := RuntimeMountOptions(d, &ateompb.Container{Name: "app", CsiVolumeMounts: []*ateompb.VolumeMount{
+		{VolumeName: "data", MountPath: "/workspace", SubPath: "sessions/018f2c"},
+		{VolumeName: "data", MountPath: "/skills", SubPath: "skills", ReadOnly: true},
+		{VolumeName: "data", MountPath: "/root"},
+	}, SystemInfoVolumeMounts: []*ateompb.SystemInfoVolumeMount{{VolumeName: "info", MountPath: "/info"}}})
+
+	for _, runtime := range []string{"gvisor", "microvm"} {
+		t.Run(runtime, func(t *testing.T) {
+			spec := Build(o)
+			prefix := "/bundles/app/subpaths/"
+			root := "/volumes/data"
+			if runtime == "microvm" {
+				if err := ShapeMicroVM(spec, MicroVMOptions{ActorDirs: d, ContainerID: "app"}); err != nil {
+					t.Fatal(err)
+				}
+				prefix = GuestSharedDir + "/app/subpaths/"
+				root = GuestSharedDir + "/csi/data"
+			} else {
+				ShapeGVisor(spec, GVisorOptions{ContainerName: "app"})
+			}
+			for _, tc := range []struct{ dest, source, mode string }{
+				{"/workspace", subPathTarget(prefix, "/workspace"), "rw"}, {"/skills", subPathTarget(prefix, "/skills"), "ro"}, {"/root", root, "rw"},
+			} {
+				m := mountFor(t, spec, tc.dest)
+				if m.Source != tc.source || !slices.Contains(m.Options, tc.mode) {
+					t.Errorf("mount %s = %+v", tc.dest, m)
+				}
+			}
+			if !slices.Contains(mountFor(t, spec, "/info").Options, "ro") {
+				t.Fatal("source read-only lost")
+			}
+		})
+	}
+}
+
+func TestWholeVolumeNames(t *testing.T) {
+	containers := []*ateompb.Container{
+		{CsiVolumeMounts: []*ateompb.VolumeMount{
+			{VolumeName: "private", SubPath: "session"}, {VolumeName: "shared", SubPath: "skills", ReadOnly: true},
+			{VolumeName: "whole"}, {VolumeName: "whole", ReadOnly: true},
+		}},
+		{CsiVolumeMounts: []*ateompb.VolumeMount{{VolumeName: "shared"}}},
+	}
+	got := WholeVolumeNames(containers, (*ateompb.Container).GetCsiVolumeMounts)
+	if !slices.Equal(got, []string{"shared", "whole"}) {
+		t.Fatalf("whole roots = %v; sub-path-only volume must stay private", got)
 	}
 }

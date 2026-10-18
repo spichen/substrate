@@ -417,7 +417,7 @@ func TestPlugin_UnmountVolume(t *testing.T) {
 
 	ctx := context.Background()
 	plugin.InitNodeCapabilities(ctx)
-	err = plugin.UnmountVolume(ctx, "test-vol", targetPath)
+	err = plugin.UnmountVolume(ctx, volume.UnmountVolumeRequest{VolumeID: "test-vol", TargetPath: targetPath})
 	if err != nil {
 		t.Fatalf("UnmountVolume failed: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestPlugin_UnmountVolume(t *testing.T) {
 	if err := os.MkdirAll(stagingPath, 0750); err != nil {
 		t.Fatalf("failed to create staging path: %v", err)
 	}
-	err = plugin.UnmountVolume(ctx, "test-vol", targetPath)
+	err = plugin.UnmountVolume(ctx, volume.UnmountVolumeRequest{VolumeID: "test-vol", TargetPath: targetPath})
 	if err != nil {
 		t.Errorf("UnmountVolume should have succeeded when NodeUnstageVolume is unimplemented, got: %v", err)
 	}
@@ -599,7 +599,7 @@ func TestPlugin_Capabilities_SkipStageUnstageWhenUnsupported(t *testing.T) {
 	}
 
 	// UnmountVolume should skip NodeUnstageVolume entirely
-	if err := plugin.UnmountVolume(ctx, "test-vol", targetPath); err != nil {
+	if err := plugin.UnmountVolume(ctx, volume.UnmountVolumeRequest{VolumeID: "test-vol", TargetPath: targetPath}); err != nil {
 		t.Errorf("UnmountVolume failed: %v", err)
 	}
 	if unstageCalled != 0 {
@@ -751,7 +751,7 @@ func TestPlugin_Capabilities_DisableStageUnstageAfterUnimplemented(t *testing.T)
 		t.Errorf("expected staging directory %q to be removed, got err: %v", stagingPath, err)
 	}
 
-	if err := plugin.UnmountVolume(ctx, "test-vol", targetPath); err != nil {
+	if err := plugin.UnmountVolume(ctx, volume.UnmountVolumeRequest{VolumeID: "test-vol", TargetPath: targetPath}); err != nil {
 		t.Errorf("UnmountVolume failed: %v", err)
 	}
 	if unstageCalled != 0 {

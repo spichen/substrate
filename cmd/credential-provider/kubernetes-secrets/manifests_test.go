@@ -44,7 +44,7 @@ func TestProviderManifests(t *testing.T) {
 		{name: "kustomize", tool: "kubectl", namespace: "ate-system",
 			args: []string{"kustomize", "../../../manifests/egress-credential-injection"}},
 		{name: "CI images", tool: "helm", namespace: "ate-system",
-			image: "localhost:5001/kagent-dev/substrate/kubernetes-secrets:helm-e2e",
+			image: "localhost:5001/spichen/substrate/kubernetes-secrets:helm-e2e",
 			args:  []string{"template", "substrate", "../../../charts/substrate", "-n", "ate-system", "--set", "image.registry=localhost:5001", "--set", "image.tag=helm-e2e"}},
 		{name: "global images", tool: "helm", namespace: "ate-system",
 			image: "mirror.example/custom/substrate/kubernetes-secrets:test",
@@ -330,7 +330,7 @@ func TestHelmAgentgatewayCredentialConfiguration(t *testing.T) {
 									if listener.TLS.Mode != "dynamicCa" || listener.TLS.Cert != "/run/egress-mitm/tls.crt" || listener.TLS.Key != "/run/egress-mitm/tls.key" {
 										t.Fatal("incorrect MITM configuration")
 									}
-									if len(route.Backends) != 1 || route.Backends[0].Dynamic == nil || len(route.Backends[0].Dynamic) != 0 || route.Backends[0].Policies.BackendTLS == nil || len(route.Backends[0].Policies.BackendTLS) != 0 {
+									if len(route.Backends) != 1 || route.Backends[0].Dynamic == nil || len(route.Backends[0].Dynamic) != 0 || route.Backends[0].Policies.BackendTLS == nil || len(route.Backends[0].Policies.BackendTLS) != 1 || route.Backends[0].Policies.BackendTLS["root"] != "/etc/ssl/certs/ca-certificates.crt" {
 										t.Fatal("HTTPS must use a dynamic destination with default public TLS trust")
 									}
 								} else if listener.Protocol != "HTTP" {

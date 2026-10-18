@@ -117,7 +117,7 @@ func contextualTuples(object string) []*openfgav1.TupleKey {
 	switch objectType {
 	case "atespace":
 		return []*openfgav1.TupleKey{parentGlobalTuple(object)}
-	case "actor", "actor_template":
+	case "actor", "actor_template", "shared_volume":
 		atespace, _, ok := strings.Cut(id, "/")
 		if !ok {
 			return nil

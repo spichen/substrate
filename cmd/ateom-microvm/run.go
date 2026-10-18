@@ -679,6 +679,9 @@ func (s *AteomService) stageMergedRootfs(ctx context.Context, rr resolvedRuntime
 			return nil, fmt.Errorf("while staging merged rootfs for %q: %w", c.name, err)
 		}
 		for _, vm := range c.imageMounts {
+			if vm.GetSubPath() != "" {
+				continue
+			}
 			src := imagecache.ImageVolumeMountPath(c.bundle, vm.GetVolumeName())
 			if err := kata.StageImageVolume(ctx, src, id, c.name, vm.GetVolumeName()); err != nil {
 				return nil, fmt.Errorf("while staging image volume %q for %q: %w", vm.GetVolumeName(), c.name, err)
@@ -686,18 +689,24 @@ func (s *AteomService) stageMergedRootfs(ctx context.Context, rr resolvedRuntime
 		}
 	}
 	if hasDurableVolumes(containers) {
-		if err := s.stageDurableVolumes(ctx, id, actorDirs.GetDurableDirVolumeMountsDir()); err != nil {
+		if err := s.stageDurableVolumes(ctx, id, actorDirs.GetDurableDirVolumeMountsDir(), ocispec.WholeVolumeNames(containers, (*ateompb.Container).GetDurableDirVolumeMounts)); err != nil {
 			return nil, fmt.Errorf("while staging durable-dir volumes: %w", err)
 		}
 	}
 	if hasCsiVolumes(containers) {
-		if err := s.stageCsiVolumes(ctx, id, actorDirs.GetVolumesDir()); err != nil {
+		if err := s.stageCsiVolumes(ctx, id, actorDirs.GetVolumesDir(), ocispec.WholeVolumeNames(containers, (*ateompb.Container).GetCsiVolumeMounts)); err != nil {
 			return nil, fmt.Errorf("while staging CSI volumes: %w", err)
 		}
 	}
 	if hasSystemInfoVolumes(containers) {
-		if err := s.stageSystemInfoVolumes(ctx, id, actorDirs.GetSystemInfoVolumeRootsDir()); err != nil {
+		if err := s.stageSystemInfoVolumes(ctx, id, actorDirs.GetSystemInfoVolumeRootsDir(), ocispec.WholeVolumeNames(containers, (*ateompb.Container).GetSystemInfoVolumeMounts)); err != nil {
 			return nil, fmt.Errorf("while staging system-info volumes: %w", err)
+		}
+	}
+	for _, c := range containers {
+		opts := ocispec.RuntimeMountOptions(actorDirs, c)
+		if err := ocispec.PrepareSubPaths(opts, filepath.Join(kata.SharedDir(id), c.GetName(), ocispec.SubPathDir)); err != nil {
+			return nil, err
 		}
 	}
 	vfsdLog, _ := os.OpenFile(virtiofsdLogPath(id), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)

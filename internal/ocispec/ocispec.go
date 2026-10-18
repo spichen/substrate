@@ -23,7 +23,6 @@ import (
 	"path"
 	"path/filepath"
 
-	"github.com/agent-substrate/substrate/internal/imagecache"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
@@ -168,33 +167,16 @@ func Build(o Options) *specs.Spec {
 		},
 	}
 
-	volumesByName := make(map[string]*ateletpb.Volume, len(o.Volumes))
-	for _, vol := range o.Volumes {
-		volumesByName[vol.GetName()] = vol
-	}
-	for _, vm := range o.VolumeMounts {
-		var srcPath string
-		options := []string{"bind", "rw"}
-		switch volumesByName[vm.GetName()].GetSource().(type) {
-		case *ateletpb.Volume_DurableDir:
-			srcPath = filepath.Join(o.DurableDirVolumeMountsDir, vm.GetName())
-		case *ateletpb.Volume_External:
-			srcPath = filepath.Join(o.VolumesDir, vm.GetName())
-		case *ateletpb.Volume_SystemInfo:
-			srcPath = filepath.Join(o.SystemInfoVolumeRootsDir, vm.GetName())
-			options = []string{"bind", "ro"}
-		case *ateletpb.Volume_Image:
-			srcPath = imagecache.ImageVolumeMountPath(o.BundlePath, vm.GetName())
-			options = []string{"bind", "ro"}
-		default:
-			continue
+	for _, v := range volumeBinds(o) {
+		src := v.source
+		if v.mount.GetSubPath() != "" {
+			src = subPathTarget(filepath.Join(o.BundlePath, SubPathDir), v.mount.GetMountPath())
 		}
-		spec.Mounts = append(spec.Mounts, specs.Mount{
-			Destination: vm.GetMountPath(),
-			Type:        "bind",
-			Source:      srcPath,
-			Options:     options,
-		})
+		mode := "rw"
+		if v.readOnly {
+			mode = "ro"
+		}
+		spec.Mounts = append(spec.Mounts, specs.Mount{Destination: v.mount.GetMountPath(), Type: "bind", Source: src, Options: []string{"bind", mode}})
 	}
 
 	return spec

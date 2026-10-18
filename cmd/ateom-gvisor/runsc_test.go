@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -182,5 +183,12 @@ func TestRestoreWorkloadRejectsEmptyRestoreDir(t *testing.T) {
 				t.Fatalf("RestoreWorkload() code = %v, want %v (err: %v)", apierror.Code(err), codes.InvalidArgument, err)
 			}
 		})
+	}
+}
+
+func TestWriteSpecRejectsDurableSubPath(t *testing.T) {
+	r := &runsc{containers: []*ateompb.Container{{Name: "app", DurableDirVolumeMounts: []*ateompb.DurableDirVolumeMount{{VolumeName: "data", MountPath: "/data", SubPath: "selected"}}}}}
+	if err := r.shapeSpec("app"); err == nil || !strings.Contains(err.Error(), "shared tmpfs") {
+		t.Fatalf("writeSpec = %v, want unsupported durable sub-path", err)
 	}
 }

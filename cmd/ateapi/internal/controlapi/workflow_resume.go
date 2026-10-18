@@ -202,12 +202,19 @@ func (w *ActorWorkflow) ensureVolumesCreated(ctx context.Context, actorRef resou
 			break
 		}
 	}
-	if !pending {
+	borrows := len(borrowedVolumeRefs(actor)) > 0
+	if !pending && !borrows {
 		markSkipped(ctx, "no volumes awaiting creation")
 		return actor, nil
 	}
 
-	volumes, createErr := createActorVolumes(ctx, w.pluginRegistry, w.storageClassLister, actor.GetMetadata().GetUid(), actorTemplate, actor.GetStatus().GetActorVolumes())
+	volumes := actor.GetStatus().GetActorVolumes()
+	if borrows {
+		if volumes, err = claimSharedVolumes(ctx, w.store, actor); err != nil {
+			return nil, err
+		}
+	}
+	volumes, createErr := createActorVolumes(ctx, w.pluginRegistry, w.storageClassLister, actor.GetMetadata().GetUid(), actorTemplate, volumes)
 	// createActorVolumes reports the state it got to even when it fails, so both
 	// paths persist the same field.
 	updatePrecondition := store.PreconditionFrom(actor)
@@ -649,7 +656,7 @@ func (w *ActorWorkflow) ensureVolumesAttached(ctx context.Context, actor *ateapi
 		if err != nil {
 			return nil, fmt.Errorf("failed to get volume plugin for %q: %w", vol.GetVolumeType(), err)
 		}
-		resp, err := plugin.AttachVolume(ctx, volume.AttachVolumeRequest{VolumeID: vol.GetStorageVolumeId(), Node: node})
+		resp, err := plugin.AttachVolume(ctx, volume.AttachVolumeRequest{VolumeID: vol.GetStorageVolumeId(), Node: node, ReadWriteMany: vol.GetReadWriteMany()})
 		if err != nil {
 			return nil, fmt.Errorf("failed to attach volume %q to node %q: %w", vol.GetStorageVolumeId(), node, err)
 		}

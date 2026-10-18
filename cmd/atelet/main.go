@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/agent-substrate/substrate/cmd/atelet/internal/apivalidation"
 	"github.com/agent-substrate/substrate/cmd/atelet/internal/ateletpath"
 	"github.com/agent-substrate/substrate/cmd/atelet/internal/credentialprovider"
 	"github.com/agent-substrate/substrate/cmd/atelet/internal/sparsefile"
@@ -1624,6 +1625,9 @@ func buildAteomWorkloadSpec(spec *ateletpb.WorkloadSpec) (*ateompb.WorkloadSpec,
 		var siMounts []*ateompb.SystemInfoVolumeMount
 		var imgMounts []*ateompb.ImageVolumeMount
 		for _, vm := range ctr.GetVolumeMounts() {
+			if errs := apivalidation.ValidateVolumeMount(vm); len(errs) > 0 {
+				return nil, errs.ToAggregate()
+			}
 			volName := vm.GetName()
 			vol, ok := volumes[volName]
 			if !ok {
@@ -1635,21 +1639,29 @@ func buildAteomWorkloadSpec(spec *ateletpb.WorkloadSpec) (*ateompb.WorkloadSpec,
 				ddMounts = append(ddMounts, &ateompb.DurableDirVolumeMount{
 					VolumeName: volName,
 					MountPath:  vm.GetMountPath(),
+					ReadOnly:   vm.GetReadOnly(),
+					SubPath:    vm.GetSubPath(),
 				})
-			case *ateletpb.Volume_External:
+			case *ateletpb.Volume_External, *ateletpb.Volume_EmptyDir:
 				csiMounts = append(csiMounts, &ateompb.VolumeMount{
 					VolumeName: volName,
 					MountPath:  vm.GetMountPath(),
+					ReadOnly:   vm.GetReadOnly(),
+					SubPath:    vm.GetSubPath(),
 				})
 			case *ateletpb.Volume_SystemInfo:
 				siMounts = append(siMounts, &ateompb.SystemInfoVolumeMount{
 					VolumeName: volName,
 					MountPath:  vm.GetMountPath(),
+					ReadOnly:   vm.GetReadOnly(),
+					SubPath:    vm.GetSubPath(),
 				})
 			case *ateletpb.Volume_Image:
 				imgMounts = append(imgMounts, &ateompb.ImageVolumeMount{
 					VolumeName: volName,
 					MountPath:  vm.GetMountPath(),
+					ReadOnly:   vm.GetReadOnly(),
+					SubPath:    vm.GetSubPath(),
 				})
 			default:
 				return nil, fmt.Errorf("container %q mounts volume %q with unsupported source %T", ctr.GetName(), volName, vol.GetSource())

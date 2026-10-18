@@ -16,7 +16,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "substrate.fullname" (list "ate-controller" .) }}
+  name: ate-controller
 rules:
 - apiGroups:
   - ""
@@ -109,8 +109,8 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "substrate.fullname" (list "ate-controller" .) }}
-  namespace: {{ .Release.Namespace }}
+  name: ate-controller
+  namespace: ate-system
 rules:
 - apiGroups:
   - discovery.k8s.io

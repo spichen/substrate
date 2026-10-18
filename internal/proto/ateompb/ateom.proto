@@ -206,6 +206,8 @@ message Container {
 message VolumeMount {
   string volume_name = 1;
   string mount_path = 2;
+  bool read_only = 3;
+  string sub_path = 4;
 }
 
 // DurableDirVolumeMount is one durable-dir volume mounted into a container.
@@ -215,6 +217,8 @@ message DurableDirVolumeMount {
   string volume_name = 1;
   // mount_path is where the container sees the volume.
   string mount_path = 2;
+  bool read_only = 3;
+  string sub_path = 4;
 }
 
 // SystemInfoVolumeMount is one system-info volume mounted (read-only) into a
@@ -226,6 +230,8 @@ message SystemInfoVolumeMount {
   string volume_name = 1;
   // mount_path is where the container sees the volume.
   string mount_path = 2;
+  bool read_only = 3;
+  string sub_path = 4;
 }
 
 // ImageVolumeMount is one image volume mounted into a container. ateom uses
@@ -236,6 +242,12 @@ message ImageVolumeMount {
   string volume_name = 1;
   // mount_path is where the container sees the volume.
   string mount_path = 2;
+
+  // read_only makes this bind read-only; it never grants source write access.
+  bool read_only = 3;
+
+  // sub_path is a caller-chosen directory inside the volume. Empty selects its root.
+  string sub_path = 4;
 }
 
 // WakeupProbe describes how to check that a container is ready to serve.

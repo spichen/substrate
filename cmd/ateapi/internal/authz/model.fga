@@ -43,6 +43,7 @@ type global
     # Listing across all atespaces (List RPCs with an empty atespace).
     define can_list_actors: viewer
     define can_list_actor_templates: viewer
+    define can_list_shared_volumes: viewer
 
     # --- Policy Governance ---
     define can_create_access_policy: owner
@@ -70,6 +71,8 @@ type atespace
     define can_create_actor_template: editor
     define can_list_actors: viewer
     define can_list_actor_templates: viewer
+    define can_create_shared_volume: editor
+    define can_list_shared_volumes: viewer
     define can_get: viewer
     define can_delete: owner
 
@@ -83,6 +86,16 @@ type actor_template
     # can_get for now; a separate relation so running a template can later
     # require more than reading it.
     define can_use_template: viewer from parent_atespace
+    define can_update: editor from parent_atespace
+    define can_delete: editor from parent_atespace
+
+# A shared volume is owned by its atespace; the actors that reference it are
+# recorded on the volume, not in the authorization model.
+type shared_volume
+  relations
+    define parent_atespace: [atespace]
+
+    define can_get: viewer from parent_atespace
     define can_update: editor from parent_atespace
     define can_delete: editor from parent_atespace
 

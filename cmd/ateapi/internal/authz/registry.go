@@ -138,6 +138,23 @@ func governance(extract checkExtractor) rpcRule {
 // defaultRPCPermissions is the declarative registry mapping gRPC full method names
 // to their permission rules.
 var defaultRPCPermissions = map[string]rpcRule{
+	// Shared volumes: viewers read, editors write, within the owning atespace.
+	ateapipb.Control_CreateSharedVolume_FullMethodName: rule(checksOf(func(r *ateapipb.CreateSharedVolumeRequest) ([]check, field.ErrorList) {
+		return onAtespace(RelationCanCreateSharedVolume, r.GetSharedVolume().GetMetadata().GetAtespace(), field.NewPath("shared_volume", "metadata", "atespace"))
+	})),
+	ateapipb.Control_GetSharedVolume_FullMethodName: rule(checksOf(func(r *ateapipb.GetSharedVolumeRequest) ([]check, field.ErrorList) {
+		return onSharedVolume(RelationCanGet, r.GetSharedVolume(), field.NewPath("shared_volume"))
+	})),
+	ateapipb.Control_ListSharedVolumes_FullMethodName: rule(checksOf(func(r *ateapipb.ListSharedVolumesRequest) ([]check, field.ErrorList) {
+		return onAtespaceOrGlobal(RelationCanListSharedVolumes, r.GetAtespace(), field.NewPath("atespace"))
+	})),
+	ateapipb.Control_UpdateSharedVolume_FullMethodName: rule(checksOf(func(r *ateapipb.UpdateSharedVolumeRequest) ([]check, field.ErrorList) {
+		return onSharedVolume(RelationCanUpdate, r.GetSharedVolume().GetMetadata(), field.NewPath("shared_volume", "metadata"))
+	})),
+	ateapipb.Control_DeleteSharedVolume_FullMethodName: rule(checksOf(func(r *ateapipb.DeleteSharedVolumeRequest) ([]check, field.ErrorList) {
+		return onSharedVolume(RelationCanDelete, r.GetSharedVolume(), field.NewPath("shared_volume"))
+	})),
+
 	// Atespaces.
 	ateapipb.Control_CreateAtespace_FullMethodName: rule(checksOf(func(*ateapipb.CreateAtespaceRequest) ([]check, field.ErrorList) {
 		return onGlobal(RelationCanCreateAtespace)
@@ -210,4 +227,11 @@ var defaultRPCPermissions = map[string]rpcRule{
 	ateapipb.Control_DeleteActor_FullMethodName: rule(checksOf(func(r *ateapipb.DeleteActorRequest) ([]check, field.ErrorList) {
 		return onActor(RelationCanDelete, r.GetActor(), field.NewPath("actor"))
 	})),
+}
+
+func onSharedVolume(relation string, ref resourceRef, fldPath *field.Path) ([]check, field.ErrorList) {
+	if errs := validateRef(ref, fldPath); len(errs) > 0 {
+		return nil, errs
+	}
+	return []check{{relation: relation, object: SharedVolumeObject(ref.GetAtespace(), ref.GetName())}}, nil
 }

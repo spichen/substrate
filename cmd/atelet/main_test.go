@@ -949,6 +949,7 @@ func TestBuildAteomWorkloadSpecForwardsDurableDirMounts(t *testing.T) {
 		Volumes: []*ateletpb.Volume{
 			{Name: "data", Source: &ateletpb.Volume_DurableDir{DurableDir: &ateletpb.DurableDirVolume{}}},
 			{Name: "cache", Source: &ateletpb.Volume_DurableDir{DurableDir: &ateletpb.DurableDirVolume{}}},
+			{Name: "empty", Source: &ateletpb.Volume_EmptyDir{EmptyDir: &ateletpb.EmptyDirVolumeSource{}}},
 			{Name: "scratch", Source: &ateletpb.Volume_External{External: &ateletpb.ExternalVolumeSource{}}},
 			{Name: "system-info", Source: &ateletpb.Volume_SystemInfo{SystemInfo: &ateletpb.SystemInfoVolume{}}},
 		},
@@ -956,16 +957,17 @@ func TestBuildAteomWorkloadSpecForwardsDurableDirMounts(t *testing.T) {
 			{
 				Name: "main",
 				VolumeMounts: []*ateletpb.VolumeMount{
-					{Name: "data", MountPath: "/home/counter"},
+					{Name: "data", MountPath: "/home/counter", SubPath: "sessions/018f2c"},
 					{Name: "cache", MountPath: "/var/cache"},
-					{Name: "scratch", MountPath: "/scratch"},
-					{Name: "system-info", MountPath: "/run/ate"},
+					{Name: "scratch", MountPath: "/scratch", SubPath: "cache", ReadOnly: true},
+					{Name: "empty", MountPath: "/empty"},
+					{Name: "system-info", MountPath: "/run/ate", SubPath: "info", ReadOnly: true},
 				},
 			},
 			{
 				Name: "sidecar",
 				VolumeMounts: []*ateletpb.VolumeMount{
-					{Name: "data", MountPath: "/shared"},
+					{Name: "data", MountPath: "/shared", SubPath: "skills", ReadOnly: true},
 				},
 			},
 			{Name: "no-volumes"},
@@ -978,20 +980,21 @@ func TestBuildAteomWorkloadSpecForwardsDurableDirMounts(t *testing.T) {
 			{
 				Name: "main",
 				DurableDirVolumeMounts: []*ateompb.DurableDirVolumeMount{
-					{VolumeName: "data", MountPath: "/home/counter"},
+					{VolumeName: "data", MountPath: "/home/counter", SubPath: "sessions/018f2c"},
 					{VolumeName: "cache", MountPath: "/var/cache"},
 				},
 				CsiVolumeMounts: []*ateompb.VolumeMount{
-					{VolumeName: "scratch", MountPath: "/scratch"},
+					{VolumeName: "scratch", MountPath: "/scratch", SubPath: "cache", ReadOnly: true},
+					{VolumeName: "empty", MountPath: "/empty"},
 				},
 				SystemInfoVolumeMounts: []*ateompb.SystemInfoVolumeMount{
-					{VolumeName: "system-info", MountPath: "/run/ate"},
+					{VolumeName: "system-info", MountPath: "/run/ate", SubPath: "info", ReadOnly: true},
 				},
 			},
 			{
 				Name: "sidecar",
 				DurableDirVolumeMounts: []*ateompb.DurableDirVolumeMount{
-					{VolumeName: "data", MountPath: "/shared"},
+					{VolumeName: "data", MountPath: "/shared", SubPath: "skills", ReadOnly: true},
 				},
 			},
 			{Name: "no-volumes"},
@@ -1341,7 +1344,7 @@ func TestBuildAteomWorkloadSpec_ImageVolumeMounts(t *testing.T) {
 		Containers: []*ateletpb.Container{{
 			Name: "app",
 			VolumeMounts: []*ateletpb.VolumeMount{
-				{Name: "agent", MountPath: "/ate"},
+				{Name: "agent", MountPath: "/ate", SubPath: "bin", ReadOnly: true},
 				{Name: "data", MountPath: "/var/data"},
 				{Name: "ext", MountPath: "/mnt/ext"},
 			},

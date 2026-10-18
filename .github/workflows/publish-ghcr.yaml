@@ -1,0 +1,105 @@
+name: publish-ghcr
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-ghcr
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve immutable image version
+        run: echo "IMAGE_TAG=v0.5.0-alpha2-shared.g${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Validate source and lifecycle
+        env:
+          REQUIRE_DOCKER: "1"
+        run: |
+          env -u NO_COLOR go test -short -p 2 ./...
+          go test -p 2 ./cmd/ateapi/internal/controlapi/functionaltest ./cmd/ateapi/internal/store/atepg
+          git diff --check
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push images
+        env:
+          IMAGE_REPOSITORY: ghcr.io/spichen/substrate
+        run: |
+          set -o errexit -o nounset -o pipefail
+          for component in ateapi atecontroller atelet ateom-gvisor ateom-microvm podcertcontroller atenet credential-provider/kubernetes-secrets; do
+            echo "building ${component}"
+            image="${component##*/}"
+            image="${image/ateom-/ateworker-}"
+            KO_DOCKER_REPO="${IMAGE_REPOSITORY}/${image}" \
+            ./hack/run-tool.sh ko build \
+              --tags "${IMAGE_TAG}" \
+              --ldflags "-X=github.com/agent-substrate/substrate/internal/version.Version=${IMAGE_TAG}" \
+              --platform linux/amd64,linux/arm64 \
+              --bare \
+              "./cmd/${component}"
+          done
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package and push Helm charts
+        env:
+          HELM_EXPERIMENTAL_OCI: "1"
+          CHART_REPOSITORY: oci://ghcr.io/spichen/substrate/helm
+        run: |
+          set -o errexit -o nounset -o pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io \
+              --username "${{ github.actor }}" \
+              --password-stdin
+          CHART_VERSION="${IMAGE_TAG#v}"
+          APP_VERSION="${IMAGE_TAG}"
+          package_dir="${RUNNER_TEMP}/helm-packages"
+          mkdir -p "${package_dir}"
+          helm package charts/substrate-crds \
+            --destination "${package_dir}" \
+            --version "${CHART_VERSION}" \
+            --app-version "${APP_VERSION}"
+          helm package charts/substrate \
+            --destination "${package_dir}" \
+            --version "${CHART_VERSION}" \
+            --app-version "${APP_VERSION}"
+          helm package charts/substrate-podcert \
+            --destination "${package_dir}" \
+            --version "${CHART_VERSION}" \
+            --app-version "${APP_VERSION}"
+          helm push "${package_dir}/substrate-crds-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
+          helm push "${package_dir}/substrate-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
+          helm push "${package_dir}/substrate-podcert-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
