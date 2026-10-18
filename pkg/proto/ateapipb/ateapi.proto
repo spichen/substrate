@@ -556,6 +556,12 @@ message ExternalVolume {
   // +k8s:update=NoModify
   // +k8s:update=NoUnset
   string shared_volume_name = 6;
+
+  // Whether this shared volume permits simultaneous writers across actors.
+  // +k8s:optional
+  // +k8s:update=NoModify
+  // +k8s:update=NoUnset
+  bool read_write_many = 7;
 }
 
 message Actor {
@@ -1226,7 +1232,7 @@ message SharedVolume {
   string capacity = 8;
 
   // access_mode is fixed at create and defaults to READ_WRITE_ONCE.
-  // TODO: accept READ_WRITE_MANY once concurrent holders are supported.
+  // READ_WRITE_MANY permits concurrent actors with a compatible CSI driver.
   //
   // +k8s:optional
   // +k8s:minimum=1

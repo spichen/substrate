@@ -180,12 +180,14 @@ func appendExternalVolumes(workloadSpec *ateletpb.WorkloadSpec, template *ateapi
 
 			var storageVolID string
 			var volType string
+			var readWriteMany bool
 			var volCtx map[string]string
 			for _, dbVol := range actor.GetStatus().GetExternalVolumes() {
 				if dbVol.GetName() == vol.GetName() {
 					storageVolID = dbVol.GetStorageVolumeId()
 					volType = dbVol.GetVolumeType()
 					volCtx = dbVol.GetVolumeContext()
+					readWriteMany = dbVol.GetReadWriteMany()
 					break
 				}
 			}
@@ -199,6 +201,7 @@ func appendExternalVolumes(workloadSpec *ateletpb.WorkloadSpec, template *ateapi
 					VolumeType:      volType,
 					VolumeContext:   volCtx,
 					PublishContext:  volumePublishContexts[vol.GetName()],
+					ReadWriteMany:   readWriteMany,
 				},
 			})
 		}

@@ -32,17 +32,20 @@ import (
 type sharedVolumePlugin struct {
 	volume.VolumePluginControlPlane
 
-	mu       sync.Mutex
-	created  []string
-	deleted  []string
-	attached []string
-	detached []string
+	mu             sync.Mutex
+	created        []string
+	createRequests []volume.CreateVolumeRequest
+	attachRequests []volume.AttachVolumeRequest
+	deleted        []string
+	attached       []string
+	detached       []string
 }
 
 func (p *sharedVolumePlugin) CreateVolume(_ context.Context, req volume.CreateVolumeRequest) (volume.CreateVolumeResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.created = append(p.created, req.Name)
+	p.createRequests = append(p.createRequests, req)
 	return volume.CreateVolumeResponse{VolumeID: "disk/" + req.Name, VolumeContext: req.Parameters}, nil
 }
 
@@ -57,6 +60,7 @@ func (p *sharedVolumePlugin) AttachVolume(_ context.Context, req volume.AttachVo
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.attached = append(p.attached, req.VolumeID+"@"+req.Node)
+	p.attachRequests = append(p.attachRequests, req)
 	return volume.AttachVolumeResponse{}, nil
 }
 
@@ -202,7 +206,7 @@ func TestCreateSharedVolume_Rejected(t *testing.T) {
 			Metadata:         &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: "many"},
 			StorageClassName: "standard",
 			Capacity:         "10Gi",
-			AccessMode:       ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY,
+			AccessMode:       ateapipb.AccessMode(99),
 		},
 	})
 	assertGrpcErrorRegex(t, err, codes.InvalidArgument, "access_mode")
@@ -495,5 +499,89 @@ func TestCreateActor_SharedVolumeBindings(t *testing.T) {
 	}
 	if diff := cmp.Diff(map[string]bool{"bound": false}, refStates(t, tc, "ctx-42")); diff != "" {
 		t.Errorf("refs mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSharedVolume_ConcurrentActors(t *testing.T) {
+	for _, secondNode := range []string{"node1", "node2"} {
+		t.Run(secondNode, func(t *testing.T) {
+			ns := namespaceForTest("ns-rwx-" + secondNode)
+			tc, plugin := setupSharedVolumeTest(t, ns)
+			defer tc.cleanup()
+			ctx := context.Background()
+			shared, err := tc.client.CreateSharedVolume(ctx, &ateapipb.CreateSharedVolumeRequest{SharedVolume: &ateapipb.SharedVolume{
+				Metadata:         &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: "shared"},
+				StorageClassName: "standard", Capacity: "10Gi", AccessMode: ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			createTemplateWithVolumes(t, tc, ns,
+				[]*ateapipb.Volume{{Name: "work", External: &ateapipb.ExternalVolumeSource{SharedVolume: &ateapipb.SharedVolumeRef{Name: "shared"}}}},
+				[]*ateapipb.VolumeMount{{Name: "work", MountPath: "/work"}})
+			firstWorker := createWorkerPod(t, tc, ns, "worker-1", "node1", "pool1")
+			createBorrowingActor(t, tc, "first", nil)
+			createBorrowingActor(t, tc, "second", nil)
+			waitForWorkerAvailable(t, tc, firstWorker)
+			ref := func(name string) *ateapipb.ObjectRef { return &ateapipb.ObjectRef{Atespace: testAtespace, Name: name} }
+			if _, err := tc.client.ResumeActor(ctx, &ateapipb.ResumeActorRequest{Actor: ref("first")}); err != nil {
+				t.Fatal(err)
+			}
+			secondWorker := createWorkerPod(t, tc, ns, "worker-2", secondNode, "pool1")
+			waitForWorkerAvailable(t, tc, secondWorker)
+			if _, err := tc.client.ResumeActor(ctx, &ateapipb.ResumeActorRequest{Actor: ref("second")}); err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(map[string]bool{"first": true, "second": true}, refStates(t, tc, "shared")); diff != "" {
+				t.Fatal(diff)
+			}
+			for _, name := range []string{"first", "second"} {
+				mount := borrowedMount(t, tc, name, "work")
+				if mount.GetStorageVolumeId() != shared.GetVolumeId() || !mount.GetReadWriteMany() {
+					t.Fatalf("wrong mount: %v", mount)
+				}
+			}
+			_, err = tc.client.DeleteSharedVolume(ctx, &ateapipb.DeleteSharedVolumeRequest{SharedVolume: ref("shared")})
+			assertGrpcErrorRegex(t, err, codes.FailedPrecondition, "still referenced")
+			if _, err := tc.client.SuspendActor(ctx, &ateapipb.SuspendActorRequest{Actor: ref("first")}); err != nil {
+				t.Fatal(err)
+			}
+			if actorState(t, tc, "second") != ateapipb.ActorState_ACTOR_STATE_RUNNING {
+				t.Fatal("second actor stopped")
+			}
+			if diff := cmp.Diff(map[string]bool{"first": false, "second": true}, refStates(t, tc, "shared")); diff != "" {
+				t.Fatal(diff)
+			}
+			if _, err := tc.client.DeleteActor(ctx, &ateapipb.DeleteActorRequest{Actor: ref("first")}); err != nil {
+				t.Fatal(err)
+			}
+			_, deleted, _, detached := plugin.snapshot()
+			if len(deleted) != 0 || len(detached) != 0 {
+				t.Fatalf("other actor lost storage: deleted=%v detached=%v", deleted, detached)
+			}
+			if _, err := tc.client.SuspendActor(ctx, &ateapipb.SuspendActorRequest{Actor: ref("second")}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tc.client.DeleteActor(ctx, &ateapipb.DeleteActorRequest{Actor: ref("second")}); err != nil {
+				t.Fatal(err)
+			}
+			_, deleted, _, detached = plugin.snapshot()
+			if len(deleted) != 1 || len(detached) != 0 {
+				t.Fatalf("last actor cleanup: deleted=%v detached=%v", deleted, detached)
+			}
+			plugin.mu.Lock()
+			defer plugin.mu.Unlock()
+			if len(plugin.createRequests) != 1 || !plugin.createRequests[0].ReadWriteMany {
+				t.Errorf("RWX provisioning not propagated: %v", plugin.createRequests)
+			}
+			if len(plugin.attachRequests) != 2 {
+				t.Fatalf("attach requests = %v", plugin.attachRequests)
+			}
+			for _, req := range plugin.attachRequests {
+				if !req.ReadWriteMany {
+					t.Errorf("RWX attach not propagated: %v", req)
+				}
+			}
+		})
 	}
 }

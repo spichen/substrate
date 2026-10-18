@@ -20,6 +20,8 @@ import (
 
 // CreateVolumeRequest describes a volume to provision.
 type CreateVolumeRequest struct {
+	// ReadWriteMany requests concurrent writers across nodes.
+	ReadWriteMany bool
 	// Name is the name to provision the volume under.
 	Name string
 	// Capacity is the requested size as a Kubernetes resource.Quantity string.
@@ -39,6 +41,8 @@ type CreateVolumeResponse struct {
 
 // AttachVolumeRequest describes a volume to attach to a node.
 type AttachVolumeRequest struct {
+	// ReadWriteMany requires a driver without controller attachment.
+	ReadWriteMany bool
 	// VolumeID is the ID assigned by the storage system at creation.
 	VolumeID string
 	// Node is the node to attach the volume to.
@@ -56,6 +60,8 @@ type AttachVolumeResponse struct {
 
 // MountVolumeRequest describes a volume to mount on the local node.
 type MountVolumeRequest struct {
+	// ReadWriteMany requires a driver without node staging.
+	ReadWriteMany bool
 	// VolumeID is the ID assigned by the storage system at creation.
 	VolumeID string
 	// TargetPath is the host path to mount the volume at.
@@ -65,6 +71,14 @@ type MountVolumeRequest struct {
 	// PublishContext is the metadata returned when the volume was attached to
 	// this node. It is empty for drivers that do not implement attachment.
 	PublishContext map[string]string
+}
+
+// UnmountVolumeRequest identifies one actor's published volume target.
+type UnmountVolumeRequest struct {
+	VolumeID   string
+	TargetPath string
+	// ReadWriteMany skips node-wide unstaging shared by other actors.
+	ReadWriteMany bool
 }
 
 // VolumePluginControlPlane abstracts storage operations performed on the control plane.
@@ -79,5 +93,5 @@ type VolumePluginControlPlane interface {
 // VolumePluginWorkerPlane abstracts storage operations performed on worker nodes.
 type VolumePluginWorkerPlane interface {
 	MountVolume(ctx context.Context, req MountVolumeRequest) error
-	UnmountVolume(ctx context.Context, volumeID string, targetPath string) error
+	UnmountVolume(ctx context.Context, req UnmountVolumeRequest) error
 }

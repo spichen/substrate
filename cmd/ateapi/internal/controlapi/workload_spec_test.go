@@ -702,7 +702,7 @@ func TestWorkloadSpecBorrowedVolume(t *testing.T) {
 				Metadata:             &ateapipb.ResourceMetadata{Atespace: "space-abc", Name: "consumer"},
 				SharedVolumeBindings: map[string]string{"borrowed": "shared"},
 				Status: &ateapipb.ActorStatus{ExternalVolumes: []*ateapipb.ExternalVolume{
-					{Name: "borrowed", SharedVolumeName: "shared", StorageVolumeId: "disk-shared", VolumeType: "nfs.csi.k8s.io", VolumeContext: map[string]string{"server": "10.0.0.2"}},
+					{Name: "borrowed", SharedVolumeName: "shared", ReadWriteMany: true, StorageVolumeId: "disk-shared", VolumeType: "nfs.csi.k8s.io", VolumeContext: map[string]string{"server": "10.0.0.2"}},
 					{Name: "owned", StorageVolumeId: "disk-1", VolumeType: "pd.csi.storage.gke.io"},
 				}},
 			},
@@ -711,6 +711,7 @@ func TestWorkloadSpecBorrowedVolume(t *testing.T) {
 					Name: "borrowed",
 					External: &ateletpb.ExternalVolumeSource{
 						StorageVolumeId: "disk-shared",
+						ReadWriteMany:   true,
 						VolumeType:      "nfs.csi.k8s.io",
 						VolumeContext:   map[string]string{"server": "10.0.0.2"},
 					},

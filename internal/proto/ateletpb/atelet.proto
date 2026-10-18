@@ -589,6 +589,10 @@ message ExternalVolumeSource {
   // +k8s:optional
   // +k8s:customValidation # at most 40 KiB in total, ten times the CSI limit for map fields
   map<string, string> publish_context = 4;
+
+  // Request concurrent writers through the CSI multi-node capability.
+  // +k8s:optional
+  bool read_write_many = 5;
 }
 
 message ImageVolumeSource {

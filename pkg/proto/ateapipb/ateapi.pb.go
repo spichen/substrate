@@ -1234,8 +1234,13 @@ type ExternalVolume struct {
 	// +k8s:update=NoModify
 	// +k8s:update=NoUnset
 	SharedVolumeName string `protobuf:"bytes,6,opt,name=shared_volume_name,json=sharedVolumeName,proto3" json:"shared_volume_name,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Whether this shared volume permits simultaneous writers across actors.
+	// +k8s:optional
+	// +k8s:update=NoModify
+	// +k8s:update=NoUnset
+	ReadWriteMany bool `protobuf:"varint,7,opt,name=read_write_many,json=readWriteMany,proto3" json:"read_write_many,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExternalVolume) Reset() {
@@ -1301,6 +1306,13 @@ func (x *ExternalVolume) GetSharedVolumeName() string {
 		return x.SharedVolumeName
 	}
 	return ""
+}
+
+func (x *ExternalVolume) GetReadWriteMany() bool {
+	if x != nil {
+		return x.ReadWriteMany
+	}
+	return false
 }
 
 type Actor struct {
@@ -2764,7 +2776,7 @@ type SharedVolume struct {
 	// +k8s:customValidation # must parse as a resource.Quantity
 	Capacity string `protobuf:"bytes,8,opt,name=capacity,proto3" json:"capacity,omitempty"`
 	// access_mode is fixed at create and defaults to READ_WRITE_ONCE.
-	// TODO: accept READ_WRITE_MANY once concurrent holders are supported.
+	// READ_WRITE_MANY permits concurrent actors with a compatible CSI driver.
 	//
 	// +k8s:optional
 	// +k8s:minimum=1
@@ -10354,14 +10366,15 @@ const file_ateapi_proto_rawDesc = "" +
 	"\vcreate_time\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"createTime\x12;\n" +
 	"\vupdate_time\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"updateTime\"\xb3\x02\n" +
+	"updateTime\"\xdb\x02\n" +
 	"\x0eExternalVolume\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12*\n" +
 	"\x11storage_volume_id\x18\x02 \x01(\tR\x0fstorageVolumeId\x12\x1f\n" +
 	"\vvolume_type\x18\x03 \x01(\tR\n" +
 	"volumeType\x12P\n" +
 	"\x0evolume_context\x18\x05 \x03(\v2).ateapi.ExternalVolume.VolumeContextEntryR\rvolumeContext\x12,\n" +
-	"\x12shared_volume_name\x18\x06 \x01(\tR\x10sharedVolumeName\x1a@\n" +
+	"\x12shared_volume_name\x18\x06 \x01(\tR\x10sharedVolumeName\x12&\n" +
+	"\x0fread_write_many\x18\a \x01(\bR\rreadWriteMany\x1a@\n" +
 	"\x12VolumeContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc9\x03\n" +

@@ -163,8 +163,6 @@ func (w *SharedVolumeWorkflow) ensureSharedVolumeReserved(ctx context.Context, v
 	return nil, fmt.Errorf("while reserving shared volume %s: %w", volumeRef, err)
 }
 
-// TODO: pass access_mode to CreateVolume as the volume capability once
-// READ_WRITE_MANY is accepted.
 func (w *SharedVolumeWorkflow) ensureSharedVolumeProvisioned(ctx context.Context, volume *ateapipb.SharedVolume, provisioning *sharedVolumeProvisioning) (_ string, _ map[string]string, err error) {
 	ctx, done := stepSpan(ctx, "ProvisionSharedVolume")
 	defer func() { err = done(err) }()
@@ -174,7 +172,7 @@ func (w *SharedVolumeWorkflow) ensureSharedVolumeProvisioned(ctx context.Context
 	if err != nil {
 		return "", nil, apierror.FailedPrecondition("failed to get volume plugin for driver %q (StorageClass %q): %v", provisioning.provisioner, volume.GetStorageClassName(), err)
 	}
-	resp, err := plugin.CreateVolume(ctx, createVolumeRequest(sharedVolumeID(volume.GetMetadata().GetUid()), volume.GetCapacity(), provisioning.parameters))
+	resp, err := plugin.CreateVolume(ctx, createVolumeRequest(sharedVolumeID(volume.GetMetadata().GetUid()), volume.GetCapacity(), provisioning.parameters, volume.GetAccessMode() == ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY))
 	if err != nil {
 		return "", nil, apierror.Internal("failed to create shared volume %s: %v", volumeRef, err)
 	}
@@ -183,8 +181,8 @@ func (w *SharedVolumeWorkflow) ensureSharedVolumeProvisioned(ctx context.Context
 
 // createVolumeRequest keeps the request construction out of callers whose
 // parameters shadow the volume package.
-func createVolumeRequest(name, capacity string, parameters map[string]string) volume.CreateVolumeRequest {
-	return volume.CreateVolumeRequest{Name: name, Capacity: capacity, Parameters: parameters}
+func createVolumeRequest(name, capacity string, parameters map[string]string, readWriteMany bool) volume.CreateVolumeRequest {
+	return volume.CreateVolumeRequest{Name: name, Capacity: capacity, Parameters: parameters, ReadWriteMany: readWriteMany}
 }
 
 func (w *SharedVolumeWorkflow) ensureSharedVolumeFinalized(ctx context.Context, volume *ateapipb.SharedVolume, volumeID string, volumeContext map[string]string) (_ *ateapipb.SharedVolume, err error) {

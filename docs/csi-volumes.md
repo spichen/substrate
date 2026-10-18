@@ -207,7 +207,7 @@ volumes:
 ## 5. Shared Volumes
 
 A `SharedVolume` is an atespace-scoped CSI volume whose lifetime is
-independent of any actor, so several actors can mount the same storage in turn.
+independent of any actor, so several actors can mount the same storage in turn or concurrently.
 Create one from a StorageClass, or register a volume that already exists:
 
 ```bash
@@ -215,11 +215,34 @@ kubectl ate create sharedvolume ctx-42 -a demo --storage-class csi-nfs-sc --capa
 kubectl ate create sharedvolume imported -a demo --volume-id <csi-volume-id> --volume-type nfs.csi.k8s.io
 ```
 
+For concurrent actors, create the volume with `--access-mode rwx`:
+
+```bash
+kubectl ate create sharedvolume workspace -a demo --storage-class csi-nfs-sc --capacity 10Gi --access-mode rwx
+```
+
+RWX currently requires a CSI driver that advertises neither controller
+`PUBLISH_UNPUBLISH_VOLUME` nor node `STAGE_UNSTAGE_VOLUME`. Capability discovery
+must succeed. Drivers requiring attachment or staging are rejected before those
+operations run; they need persistent per-node reference tracking before they can
+be used safely with concurrent actors. Provisioning checks controller capabilities;
+resume checks controller and node capabilities, including for registered volumes.
+
+Each actor gets its own node publish target. Suspension or deletion unpublishes
+only that target, without detaching or unstaging storage used by other actors.
+RWX requests use CSI `MULTI_NODE_MULTI_WRITER`; an incompatible backend may reject
+provisioning or publishing. Per-mount `read_only` remains a sandbox mount property.
+Writers sharing files must coordinate updates themselves. Separate `sub_path`
+views can give each actor its own workspace while sharing a read-only skills tree.
+Actor snapshots do not provide a coordinated snapshot of shared external storage;
+other actors may change its contents while an actor is suspended.
+
 Each volume records:
 
-- `accessMode`: fixed at create. Only `READ_WRITE_ONCE` is accepted today, so
-  at most one resumed actor holds the volume; a resume that would take a held
-  volume fails and names the holder.
+- `accessMode`: fixed at create. `READ_WRITE_ONCE` (the default) permits
+  one resumed actor; a conflicting resume fails and names the holder.
+  `READ_WRITE_MANY` permits multiple resumed actors on the same or different
+  nodes. The CSI backend must support concurrent filesystem writers.
 - `deleteTrigger`: `MANUAL` removes the volume only on an explicit delete;
   `LAST_ACTOR` removes it when the last actor referencing it is deleted.
   Provisioned volumes default to `LAST_ACTOR`, registered ones to `MANUAL`.

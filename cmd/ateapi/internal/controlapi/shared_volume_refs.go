@@ -104,6 +104,7 @@ func sharedVolumeMount(templateVolumeName string, volume *ateapipb.SharedVolume)
 		StorageVolumeId:  volume.GetVolumeId(),
 		VolumeType:       volume.GetVolumeType(),
 		VolumeContext:    volume.GetVolumeContext(),
+		ReadWriteMany:    volume.GetAccessMode() == ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY,
 	}
 }
 
@@ -177,7 +178,7 @@ var errSharedVolumeHeld = errors.New("shared volume is held by another actor")
 
 // claimSharedVolumes marks the actor's references active and refreshes the
 // recorded mounts. A READ_WRITE_ONCE volume another actor holds is refused.
-// TODO: let READ_WRITE_MANY volumes carry several active references.
+// READ_WRITE_MANY references may be active simultaneously.
 func claimSharedVolumes(ctx context.Context, st sharedVolumeRefStore, actor *ateapipb.Actor) ([]*ateapipb.ExternalVolume, error) {
 	volumes := slices.Clone(actor.GetStatus().GetExternalVolumes())
 	actorUID := actor.GetMetadata().GetUid()
@@ -192,7 +193,7 @@ func claimSharedVolumes(ctx context.Context, st sharedVolumeRefStore, actor *ate
 				return fmt.Errorf("shared volume is not ready (state %s)", toUpdate.GetStatus().GetState())
 			}
 			for _, ref := range toUpdate.GetStatus().GetRefs() {
-				if ref.GetActive() && ref.GetActorUid() != actorUID {
+				if toUpdate.GetAccessMode() != ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY && ref.GetActive() && ref.GetActorUid() != actorUID {
 					holder = ref.GetActorName()
 					return errSharedVolumeHeld
 				}

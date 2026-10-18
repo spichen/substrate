@@ -2044,8 +2044,11 @@ type ExternalVolumeSource struct {
 	// +k8s:optional
 	// +k8s:customValidation # at most 40 KiB in total, ten times the CSI limit for map fields
 	PublishContext map[string]string `protobuf:"bytes,4,rep,name=publish_context,json=publishContext,proto3" json:"publish_context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Request concurrent writers through the CSI multi-node capability.
+	// +k8s:optional
+	ReadWriteMany bool `protobuf:"varint,5,opt,name=read_write_many,json=readWriteMany,proto3" json:"read_write_many,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExternalVolumeSource) Reset() {
@@ -2104,6 +2107,13 @@ func (x *ExternalVolumeSource) GetPublishContext() map[string]string {
 		return x.PublishContext
 	}
 	return nil
+}
+
+func (x *ExternalVolumeSource) GetReadWriteMany() bool {
+	if x != nil {
+		return x.ReadWriteMany
+	}
+	return false
 }
 
 type ImageVolumeSource struct {
@@ -4317,13 +4327,14 @@ const file_atelet_proto_rawDesc = "" +
 	"containers\x12(\n" +
 	"\avolumes\x18\x02 \x03(\v2\x0e.atelet.VolumeR\avolumes\"\x18\n" +
 	"\x16DurableDirVolumeSource\"\x16\n" +
-	"\x14EmptyDirVolumeSource\"\x9b\x03\n" +
+	"\x14EmptyDirVolumeSource\"\xc3\x03\n" +
 	"\x14ExternalVolumeSource\x12*\n" +
 	"\x11storage_volume_id\x18\x01 \x01(\tR\x0fstorageVolumeId\x12\x1f\n" +
 	"\vvolume_type\x18\x02 \x01(\tR\n" +
 	"volumeType\x12V\n" +
 	"\x0evolume_context\x18\x03 \x03(\v2/.atelet.ExternalVolumeSource.VolumeContextEntryR\rvolumeContext\x12Y\n" +
-	"\x0fpublish_context\x18\x04 \x03(\v20.atelet.ExternalVolumeSource.PublishContextEntryR\x0epublishContext\x1a@\n" +
+	"\x0fpublish_context\x18\x04 \x03(\v20.atelet.ExternalVolumeSource.PublishContextEntryR\x0epublishContext\x12&\n" +
+	"\x0fread_write_many\x18\x05 \x01(\bR\rreadWriteMany\x1a@\n" +
 	"\x12VolumeContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aA\n" +
