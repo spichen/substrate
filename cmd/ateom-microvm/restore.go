@@ -320,6 +320,10 @@ func (s *AteomService) restoreFullScope(ctx context.Context, p actorBootParams, 
 			}
 		}
 	}()
+	if err := s.tunnel.ActivateEgress(p.attribution(), egress); err != nil {
+		return err
+	}
+
 	netDevs, err := ch.SnapshotNetDevices(restoreDir)
 	if err != nil {
 		return fmt.Errorf("while reading snapshot net devices: %w", err)
@@ -477,7 +481,7 @@ func (s *AteomService) restoreFullScope(ctx context.Context, p actorBootParams, 
 		s.startActorLogForwarding(guestAC, attribution, c.GetName(), c.GetName())
 	}
 
-	if err := s.tunnel.Activate(p.attribution(), s.sandboxDialer(p.actorUID), egress); err != nil {
+	if err := s.tunnel.ActivateIngress(p.attribution(), s.sandboxDialer(p.actorUID)); err != nil {
 		return err
 	}
 	s.setRunningVM(actorUID, ra)

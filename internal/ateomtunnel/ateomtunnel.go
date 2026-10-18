@@ -218,12 +218,17 @@ func (t *Tunnel) PrepareEgress(ctx context.Context, actor resources.ActorAttribu
 	return &ActorEgress{client: gatewayClient, certificateSource: certificateSource, expiresAt: expiresAt}, nil
 }
 
-// Activate starts admitting the actor's traffic. Ingress reaches the actor
-// through dial; egress is activated only when it was prepared.
-func (t *Tunnel) Activate(actor resources.ActorAttribution, dial atunnel.DialFunc, egress *ActorEgress) error {
+// ActivateIngress admits requests after the workload passes its wakeup probes.
+func (t *Tunnel) ActivateIngress(actor resources.ActorAttribution, dial atunnel.DialFunc) error {
 	if err := t.Ingress.Activate(actor.Ref.Atespace, actor.Ref.Name, actor.UID, dial); err != nil {
 		return fmt.Errorf("while activating actor ingress: %w", err)
 	}
+	return nil
+}
+
+// ActivateEgress enables outbound connections before workload startup or resume,
+// so initialization and wakeup probes can depend on external services.
+func (t *Tunnel) ActivateEgress(actor resources.ActorAttribution, egress *ActorEgress) error {
 	if egress == nil {
 		return nil
 	}

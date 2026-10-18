@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-substrate/substrate/internal/atunnel"
 	"github.com/agent-substrate/substrate/internal/proto/ateompb"
 	"github.com/agent-substrate/substrate/internal/resources"
 	"github.com/spf13/pflag"
@@ -275,7 +276,7 @@ func TestActivateAndDeactivate(t *testing.T) {
 	actor := resources.ActorAttribution{Ref: resources.ActorRef{Atespace: "space", Name: "actor"}, UID: "uid"}
 	dial := func(context.Context, string, string) (net.Conn, error) { return nil, net.ErrClosed }
 
-	if err := tunnel.Activate(actor, dial, nil); err != nil {
+	if err := tunnel.ActivateIngress(actor, dial); err != nil {
 		t.Fatalf("Activate without egress: %v", err)
 	}
 	if err := tunnel.Deactivate(ctx, actor); err != nil {
@@ -286,8 +287,41 @@ func TestActivateAndDeactivate(t *testing.T) {
 		t.Fatalf("second Deactivate: %v", err)
 	}
 
-	err := tunnel.Activate(resources.ActorAttribution{UID: "uid"}, dial, nil)
+	err := tunnel.ActivateIngress(resources.ActorAttribution{UID: "uid"}, dial)
 	if err == nil || !strings.Contains(err.Error(), "while activating actor ingress") {
 		t.Fatalf("Activate with no actor reference = %v, want an ingress error", err)
+	}
+}
+
+func TestEgressBeforeIngress(t *testing.T) {
+	tunnel := startTunnel(t, testConfig(t))
+	actor := resources.ActorAttribution{Ref: resources.ActorRef{Atespace: "space", Name: "actor"}, UID: "uid"}
+	t.Cleanup(func() { _ = tunnel.Deactivate(context.Background(), actor) })
+	if err := tunnel.ActivateEgress(actor, nil); err != nil {
+		t.Fatalf("unconfigured egress: %v", err)
+	}
+	egress := &ActorEgress{client: &atunnel.Client{}, certificateSource: &atunnel.BrokerCertificateSource{}, expiresAt: time.Now().Add(time.Hour)}
+	expired := *egress
+	expired.expiresAt = time.Now().Add(-time.Hour)
+	if err := tunnel.ActivateEgress(actor, &expired); err == nil {
+		t.Fatal("expired certificate must fail closed")
+	}
+	if err := tunnel.ActivateEgress(actor, egress); err != nil {
+		t.Fatalf("startup egress: %v", err)
+	}
+	// Ingress must still be inactive while initialization uses egress. A first
+	// activation succeeds; a duplicate activation of this incarnation fails.
+	dial := func(context.Context, string, string) (net.Conn, error) { return nil, net.ErrClosed }
+	if err := tunnel.ActivateIngress(actor, dial); err != nil {
+		t.Fatalf("ingress after readiness: %v", err)
+	}
+	if err := tunnel.ActivateIngress(actor, dial); err == nil {
+		t.Fatal("duplicate ingress activation unexpectedly succeeded")
+	}
+	if err := tunnel.Deactivate(context.Background(), actor); err != nil {
+		t.Fatalf("cleanup both directions: %v", err)
+	}
+	if err := tunnel.ActivateEgress(actor, egress); err != nil {
+		t.Fatalf("egress after failed startup cleanup: %v", err)
 	}
 }
