@@ -34,25 +34,28 @@ import (
 )
 
 type mountCall struct {
-	volumeID   string
-	targetPath string
-	attributes map[string]string
+	volumeID      string
+	targetPath    string
+	attributes    map[string]string
+	readWriteMany bool
 }
 
 type fakeWorkerPlugin struct {
-	mountErr    error
-	mountErrs   map[string]error
-	unmountErr  error
-	unmountErrs map[string]error
-	unmounted   []string
-	mountCalls  []mountCall
+	mountErr     error
+	mountErrs    map[string]error
+	unmountErr   error
+	unmountErrs  map[string]error
+	unmounted    []string
+	unmountCalls []volume.UnmountVolumeRequest
+	mountCalls   []mountCall
 }
 
 func (f *fakeWorkerPlugin) MountVolume(ctx context.Context, req volume.MountVolumeRequest) error {
 	f.mountCalls = append(f.mountCalls, mountCall{
-		volumeID:   req.VolumeID,
-		targetPath: req.TargetPath,
-		attributes: req.VolumeContext,
+		volumeID:      req.VolumeID,
+		targetPath:    req.TargetPath,
+		attributes:    req.VolumeContext,
+		readWriteMany: req.ReadWriteMany,
 	})
 	if f.mountErrs != nil {
 		if err, ok := f.mountErrs[req.VolumeID]; ok {
@@ -62,7 +65,9 @@ func (f *fakeWorkerPlugin) MountVolume(ctx context.Context, req volume.MountVolu
 	return f.mountErr
 }
 
-func (f *fakeWorkerPlugin) UnmountVolume(ctx context.Context, volumeID string, targetPath string) error {
+func (f *fakeWorkerPlugin) UnmountVolume(ctx context.Context, req volume.UnmountVolumeRequest) error {
+	volumeID := req.VolumeID
+	f.unmountCalls = append(f.unmountCalls, req)
 	f.unmounted = append(f.unmounted, volumeID)
 	if f.unmountErrs != nil {
 		if err, ok := f.unmountErrs[volumeID]; ok {
@@ -570,5 +575,39 @@ func TestResetEmptyDirClearsPreviousContents(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("dir still has %d entries after reset", len(entries))
+	}
+}
+
+func TestSharedVolumeConcurrentTargets(t *testing.T) {
+	withTempActorsDir(t)
+	ctx := context.Background()
+	plugin := &fakeWorkerPlugin{}
+	s := &Atelet{volumePlugins: map[string]volume.VolumePluginWorkerPlane{"mock-driver": plugin}}
+	volumes := []*ateletpb.Volume{{Name: "shared", External: &ateletpb.ExternalVolumeSource{StorageVolumeId: "same-volume", VolumeType: "mock-driver", ReadWriteMany: true}}}
+	for _, actor := range []string{"first", "second"} {
+		if err := s.mountExternalVolumes(ctx, actor, volumes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(plugin.mountCalls) != 2 {
+		t.Fatal(plugin.mountCalls)
+	}
+	if plugin.mountCalls[0].targetPath == plugin.mountCalls[1].targetPath {
+		t.Fatal("actors share a publish target")
+	}
+	for _, call := range plugin.mountCalls {
+		if !call.readWriteMany {
+			t.Fatal("RWX mode lost")
+		}
+	}
+	if err := s.unmountExternalVolumes(ctx, "first", volumes); err != nil {
+		t.Fatal(err)
+	}
+	if len(plugin.unmountCalls) != 1 {
+		t.Fatal(plugin.unmountCalls)
+	}
+	call := plugin.unmountCalls[0]
+	if !call.ReadWriteMany || call.TargetPath != plugin.mountCalls[0].targetPath {
+		t.Fatalf("wrong cleanup request: %v", call)
 	}
 }

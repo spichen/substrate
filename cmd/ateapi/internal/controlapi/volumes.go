@@ -226,6 +226,11 @@ func detachActorVolumes(ctx context.Context, registry VolumePluginRegistry, acto
 	// Collect errors for all volumes to detach, but continue processing so we attempt to detach all volumes.
 	var errs []error
 	for _, vol := range volumesToDetach {
+		// RWX is restricted to drivers without controller attachment. Never
+		// detach another actor's shared storage, including during failed resume.
+		if vol.GetReadWriteMany() {
+			continue
+		}
 		// StorageVolumeId is only populated once the volume is provisioned.
 		// Skip volumes that were never created (e.g. creation failed).
 		if vol.GetStorageVolumeId() == "" {

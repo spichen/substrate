@@ -66,9 +66,9 @@ func ValidateCustom_CreateSharedVolumeRequest(_ context.Context, _ operation.Ope
 	storageClassName, volumeID := volume.GetStorageClassName(), volume.GetVolumeId()
 
 	var errs field.ErrorList
-	// TODO: accept READ_WRITE_MANY once concurrent holders are supported.
-	if mode := volume.GetAccessMode(); mode != ateapipb.AccessMode_ACCESS_MODE_UNSPECIFIED && mode != ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_ONCE {
-		errs = append(errs, field.NotSupported(volumePath.Child("access_mode"), mode.String(), []string{ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_ONCE.String()}))
+	// Access modes are fixed when the volume is created.
+	if mode := volume.GetAccessMode(); mode != ateapipb.AccessMode_ACCESS_MODE_UNSPECIFIED && mode != ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_ONCE && mode != ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY {
+		errs = append(errs, field.NotSupported(volumePath.Child("access_mode"), mode.String(), []string{ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_ONCE.String(), ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY.String()}))
 	}
 	switch {
 	case storageClassName == "" && volumeID == "":

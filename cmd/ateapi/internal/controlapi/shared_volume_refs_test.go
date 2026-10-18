@@ -17,6 +17,7 @@ package controlapi
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -290,4 +291,96 @@ type recordingSharedVolumeDeleter struct {
 func (d *recordingSharedVolumeDeleter) DeleteSharedVolume(_ context.Context, volumeRef resources.SharedVolumeRef, _ store.DeletePreconditions) (*ateapipb.SharedVolume, error) {
 	d.deleted = append(d.deleted, volumeRef.String())
 	return nil, nil
+}
+
+func TestClaimSharedVolumes_ConcurrentWriters(t *testing.T) {
+	ctx := context.Background()
+	st := newTestPersistence(t)
+	storetest.MustCreateSharedVolume(t, ctx, st, &ateapipb.SharedVolume{
+		Metadata:      &ateapipb.ResourceMetadata{Atespace: refTestAtespace, Name: "shared"},
+		AccessMode:    ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY,
+		DeleteTrigger: ateapipb.DeleteTrigger_DELETE_TRIGGER_LAST_ACTOR,
+		VolumeId:      "disk/shared", VolumeType: "mock",
+		Status: &ateapipb.SharedVolumeStatus{State: ateapipb.SharedVolumeState_SHARED_VOLUME_STATE_READY},
+	})
+	actors := []*ateapipb.Actor{refTestActor(borrowedMount("shared")), refTestActor(borrowedMount("shared"))}
+	actors[1].Metadata.Uid = refTestOtherUID
+	actors[1].Metadata.Name = "other"
+	var wg sync.WaitGroup
+	for _, actor := range actors {
+		wg.Go(func() {
+			for range 10 {
+				mounts, err := claimSharedVolumes(ctx, st, actor)
+				if apierror.Code(err) == codes.Aborted {
+					continue
+				}
+				if err != nil {
+					t.Errorf("claim: %v", err)
+					return
+				}
+				if len(mounts) != 1 || !mounts[0].GetReadWriteMany() {
+					t.Errorf("RWX capability lost: %v", mounts)
+				}
+				return
+			}
+			t.Error("claim exhausted conflict retries")
+		})
+	}
+	wg.Wait()
+	if diff := cmp.Diff(map[string]bool{refTestActorUID: true, refTestOtherUID: true}, refStates(mustGetVolume(t, ctx, st, "shared"))); diff != "" {
+		t.Fatal(diff)
+	}
+	if err := deactivateSharedVolumes(ctx, st, actors[0]); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(map[string]bool{refTestActorUID: false, refTestOtherUID: true}, refStates(mustGetVolume(t, ctx, st, "shared"))); diff != "" {
+		t.Fatal(diff)
+	}
+	deleter := &recordingSharedVolumeDeleter{}
+	if err := releaseSharedVolumes(ctx, st, deleter, actors[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleter.deleted) != 0 {
+		t.Fatal("deleted volume still used by other actor")
+	}
+	if diff := cmp.Diff(map[string]bool{refTestOtherUID: true}, refStates(mustGetVolume(t, ctx, st, "shared"))); diff != "" {
+		t.Fatal(diff)
+	}
+	if err := releaseSharedVolumes(ctx, st, deleter, actors[1]); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleter.deleted) != 1 {
+		t.Fatalf("last reference did not delete volume: %v", deleter.deleted)
+	}
+}
+
+func TestCrashActorSharedVolumeAllowsOtherWriters(t *testing.T) {
+	ctx := context.Background()
+	st := newTestPersistence(t)
+	crashed := storetest.MustCreateActor(t, ctx, st, refTestActor())
+	storetest.MustCreateSharedVolume(t, ctx, st, &ateapipb.SharedVolume{
+		Metadata:      &ateapipb.ResourceMetadata{Atespace: refTestAtespace, Name: "shared"},
+		AccessMode:    ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY,
+		DeleteTrigger: ateapipb.DeleteTrigger_DELETE_TRIGGER_MANUAL,
+		VolumeId:      "disk/shared", VolumeType: "mock",
+		Status: &ateapipb.SharedVolumeStatus{State: ateapipb.SharedVolumeState_SHARED_VOLUME_STATE_READY, Refs: []*ateapipb.ActorRef{actorRefOf(crashed, true)}},
+	})
+	mustUpdateActorStatus(t, ctx, st, crashed, func(s *ateapipb.ActorStatus) {
+		s.State = ateapipb.ActorState_ACTOR_STATE_RUNNING
+		s.ExternalVolumes = []*ateapipb.ExternalVolume{borrowedMount("shared")}
+	})
+	if err := crashActor(ctx, st, resources.ActorRef{Atespace: refTestAtespace, Name: "consumer"}, "resume", "worker lost"); err != nil {
+		t.Fatal(err)
+	}
+	other := refTestActor(borrowedMount("shared"))
+	other.Metadata.Uid = refTestOtherUID
+	other.Metadata.Name = "other"
+	if _, err := claimSharedVolumes(ctx, st, other); err != nil {
+		t.Fatal(err)
+	}
+	// A crash is not evidence that the old node has unmounted. Keep its
+	// reference while admitting independent RWX actors.
+	if diff := cmp.Diff(map[string]bool{crashed.GetMetadata().GetUid(): true, refTestOtherUID: true}, refStates(mustGetVolume(t, ctx, st, "shared"))); diff != "" {
+		t.Fatal(diff)
+	}
 }

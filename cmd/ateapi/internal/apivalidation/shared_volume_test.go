@@ -73,8 +73,12 @@ func TestValidateCustomCreateSharedVolumeRequest(t *testing.T) {
 			wantFields: []string{"shared_volume.capacity"},
 		},
 		{
-			name:       "read write many is not supported yet",
-			volume:     &ateapipb.SharedVolume{StorageClassName: "standard", Capacity: "10Gi", AccessMode: ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY},
+			name:   "read write many",
+			volume: &ateapipb.SharedVolume{StorageClassName: "standard", Capacity: "10Gi", AccessMode: ateapipb.AccessMode_ACCESS_MODE_READ_WRITE_MANY},
+		},
+		{
+			name:       "unknown access mode",
+			volume:     &ateapipb.SharedVolume{StorageClassName: "standard", Capacity: "10Gi", AccessMode: ateapipb.AccessMode(99)},
 			wantFields: []string{"shared_volume.access_mode"},
 		},
 	}
