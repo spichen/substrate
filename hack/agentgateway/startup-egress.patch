@@ -1,8 +1,8 @@
 diff --git a/crates/agentgateway/src/http/substrate/egress_actor_resolution.rs b/crates/agentgateway/src/http/substrate/egress_actor_resolution.rs
-index e50e2097..049ff643 100644
+index e50e2097..1447d8b8 100644
 --- a/crates/agentgateway/src/http/substrate/egress_actor_resolution.rs
 +++ b/crates/agentgateway/src/http/substrate/egress_actor_resolution.rs
-@@ -134,10 +134,8 @@ impl EgressActorResolution {
+@@ -134,10 +134,13 @@ impl EgressActorResolution {
  				);
  			},
  		};
@@ -11,21 +11,30 @@ index e50e2097..049ff643 100644
 -		{
 -			return Err(ProxyError::SubstrateEgressDenied("actor is not running".to_owned()).into());
 +		if !actor_can_egress(current.status.as_ref()) {
-+			return Err(ProxyError::SubstrateEgressDenied("actor is not running or starting on a worker".to_owned()).into());
++			return Err(
++				ProxyError::SubstrateEgressDenied(
++					"actor is not running or starting on a worker".to_owned(),
++				)
++				.into(),
++			);
  		}
  		Ok(ActorIdentity {
  			atespace: actor.atespace.clone(),
-@@ -150,6 +148,18 @@ impl EgressActorResolution {
+@@ -150,6 +153,22 @@ impl EgressActorResolution {
  	}
  }
  
 +// Startup and wakeup probes may need egress before the worker reports readiness.
 +// Assignment is required during resume; inactive and unknown states stay denied.
 +fn actor_can_egress(status: Option<&protos::ateapi::ActorStatus>) -> bool {
-+	let Some(status) = status else { return false; };
++	let Some(status) = status else {
++		return false;
++	};
 +	match protos::ateapi::ActorState::try_from(status.state) {
 +		Ok(protos::ateapi::ActorState::Running) => true,
-+		Ok(protos::ateapi::ActorState::Resuming) => status.worker_assignment.as_ref()
++		Ok(protos::ateapi::ActorState::Resuming) => status
++			.worker_assignment
++			.as_ref()
 +			.is_some_and(|assignment| !assignment.worker_pod_ip.is_empty()),
 +		_ => false,
 +	}
@@ -34,7 +43,7 @@ index e50e2097..049ff643 100644
  #[cfg(test)]
  mod tests {
  	use rcgen::{CertificateParams, CustomExtension, KeyPair, SanType};
-@@ -158,6 +168,28 @@ mod tests {
+@@ -158,6 +177,32 @@ mod tests {
  	use crate::http::Body;
  	use crate::transport::tls::TlsInfo;
  
@@ -50,7 +59,11 @@ index e50e2097..049ff643 100644
 +					}),
 +				};
 +				let expected = state == 2 || (state == 1 && assigned);
-+				assert_eq!(actor_can_egress(Some(&status)), expected, "state={state} assigned={assigned}");
++				assert_eq!(
++					actor_can_egress(Some(&status)),
++					expected,
++					"state={state} assigned={assigned}"
++				);
 +			}
 +		}
 +		let empty_assignment = protos::ateapi::ActorStatus {
