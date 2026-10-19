@@ -16,6 +16,11 @@ name: publish-ghcr
 
 on:
   workflow_dispatch:
+    inputs:
+      gateway_only:
+        description: Build the pinned gateway with startup egress support
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,6 +32,7 @@ concurrency:
 
 jobs:
   publish:
+    if: ${{ !inputs.gateway_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -117,3 +123,51 @@ jobs:
           helm push "${package_dir}/substrate-crds-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
           helm push "${package_dir}/substrate-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
           helm push "${package_dir}/substrate-podcert-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
+
+  gateway:
+    if: ${{ inputs.gateway_only }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      JEMALLOC_SYS_WITH_LG_PAGE: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: agentgateway/agentgateway
+          ref: 168b05d62828efd96bea286bceaa8a03cdde2aea
+          path: gateway
+      - name: Apply startup authorization fix
+        working-directory: gateway
+        run: git apply ../hack/agentgateway/startup-egress.patch
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gateway
+      - name: Test actor identity and lifecycle authorization
+        working-directory: gateway
+        run: cargo test --locked -p agentgateway --lib http::substrate::egress_actor_resolution::tests
+      - name: Build gateway
+        working-directory: gateway
+        run: |
+          export VERSION="substrate-startup-${GITHUB_SHA:0:12}"
+          export GIT_REVISION="168b05d62828efd96bea286bceaa8a03cdde2aea+${GITHUB_SHA}"
+          cargo build --locked --release -p agentgateway-app
+          target/release/agentgateway --version
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish ARM64 gateway for the cluster
+        run: |
+          cp gateway/target/release/agentgateway hack/agentgateway/agentgateway
+          docker buildx build --platform linux/arm64 --push \
+            --tag "ghcr.io/spichen/substrate/agentgateway:startup-g${GITHUB_SHA:0:12}" \
+            hack/agentgateway

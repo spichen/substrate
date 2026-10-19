@@ -1,0 +1,65 @@
+diff --git a/crates/agentgateway/src/http/substrate/egress_actor_resolution.rs b/crates/agentgateway/src/http/substrate/egress_actor_resolution.rs
+index e50e2097..049ff643 100644
+--- a/crates/agentgateway/src/http/substrate/egress_actor_resolution.rs
++++ b/crates/agentgateway/src/http/substrate/egress_actor_resolution.rs
+@@ -134,10 +134,8 @@ impl EgressActorResolution {
+ 				);
+ 			},
+ 		};
+-		if current.status.as_ref().map(|status| status.state)
+-			!= Some(protos::ateapi::ActorState::Running as i32)
+-		{
+-			return Err(ProxyError::SubstrateEgressDenied("actor is not running".to_owned()).into());
++		if !actor_can_egress(current.status.as_ref()) {
++			return Err(ProxyError::SubstrateEgressDenied("actor is not running or starting on a worker".to_owned()).into());
+ 		}
+ 		Ok(ActorIdentity {
+ 			atespace: actor.atespace.clone(),
+@@ -150,6 +148,18 @@ impl EgressActorResolution {
+ 	}
+ }
+ 
++// Startup and wakeup probes may need egress before the worker reports readiness.
++// Assignment is required during resume; inactive and unknown states stay denied.
++fn actor_can_egress(status: Option<&protos::ateapi::ActorStatus>) -> bool {
++	let Some(status) = status else { return false; };
++	match protos::ateapi::ActorState::try_from(status.state) {
++		Ok(protos::ateapi::ActorState::Running) => true,
++		Ok(protos::ateapi::ActorState::Resuming) => status.worker_assignment.as_ref()
++			.is_some_and(|assignment| !assignment.worker_pod_ip.is_empty()),
++		_ => false,
++	}
++}
++
+ #[cfg(test)]
+ mod tests {
+ 	use rcgen::{CertificateParams, CustomExtension, KeyPair, SanType};
+@@ -158,6 +168,28 @@ mod tests {
+ 	use crate::http::Body;
+ 	use crate::transport::tls::TlsInfo;
+ 
++	#[test]
++	fn egress_lifecycle_authorization() {
++		assert!(!actor_can_egress(None));
++		for state in 0..=10 {
++			for assigned in [false, true] {
++				let status = protos::ateapi::ActorStatus {
++					state,
++					worker_assignment: assigned.then(|| protos::ateapi::WorkerAssignment {
++						worker_pod_ip: "192.0.2.1".to_owned(),
++					}),
++				};
++				let expected = state == 2 || (state == 1 && assigned);
++				assert_eq!(actor_can_egress(Some(&status)), expected, "state={state} assigned={assigned}");
++			}
++		}
++		let empty_assignment = protos::ateapi::ActorStatus {
++			state: protos::ateapi::ActorState::Resuming as i32,
++			worker_assignment: Some(protos::ateapi::WorkerAssignment::default()),
++		};
++		assert!(!actor_can_egress(Some(&empty_assignment)));
++	}
++
+ 	fn request_with_identity(uris: &[&str]) -> Request {
+ 		let mut params = CertificateParams::default();
+ 		params.subject_alt_names = uris
