@@ -260,7 +260,12 @@ func TestBuildServerTLSConfigReloadsCACertsWithoutRestart(t *testing.T) {
 		t.Fatalf("GetConfigForClient() first call error = %v", err)
 	}
 
-	writeCA(t, path, "ca-two")
+	// Replace the bundle like a projected-volume rotation, independent of mtime.
+	rotatedPath := path + ".rotated"
+	writeCA(t, rotatedPath, "ca-two")
+	if err := os.Rename(rotatedPath, path); err != nil {
+		t.Fatal(err)
+	}
 
 	after, err := cfg.GetConfigForClient(nil)
 	if err != nil {

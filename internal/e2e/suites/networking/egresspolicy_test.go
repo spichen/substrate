@@ -183,7 +183,7 @@ func TestActorEgressHTTPSByHostname(t *testing.T) {
 func TestActorEgressPassthroughPolicyRefresh(t *testing.T) {
 	ctx := t.Context()
 	dataplane := e2e.CurrentAtenetDataplane()
-	_, address, rootCA := prepareProtocolOrigin(t, ctx, e2e.ServerPod{
+	origin, address, rootCA := prepareProtocolOrigin(t, ctx, e2e.ServerPod{
 		Name:       "passthrough-origin",
 		ImportPath: "go.ate.dev/substrate/internal/e2e/fixtures/testserver",
 		Args:       []string{"http"},
@@ -220,14 +220,29 @@ func TestActorEgressPassthroughPolicyRefresh(t *testing.T) {
 	// Allow connection to be fully established before changing the policy.
 	assertEgressGatewayConnect(t, ctx, since, actorAtespace, actorName, "443")
 
-	e2e.EnsureEgressPolicy(t, ctx, e2e.GetClients(), actorRef.ToObjectRef(), e2e.EgressAllowPassthrough("foo.bar.baz"))
+	// Keep DNS allowed through an HTTP rule on port 80 so the second HTTPS
+	// request reaches the gateway and tests revocation of TLS passthrough.
+	e2e.EnsureEgressPolicy(t, ctx, e2e.GetClients(), actorRef.ToObjectRef(),
+		e2e.EgressAllowHTTP(origin.SvcName()+".cluster.local"),
+		e2e.EgressAllowPassthrough("foo.bar.baz"),
+	)
 	// Wait for the policy cached in ext_proc server to expire, so it will fetch the new one.
 	// ext_proc cache freshness interval is 10 seconds.
 	time.Sleep(11 * time.Second)
 
-	status, body := postThroughEgressActorUntil(t, ctx, router, actorRef, "/post", postPayload, notTransient)
+	// AgentGateway intercepts denied TLS connections to return HTTP 403.
+	// Use the actor's default gateway roots for this request; the first request
+	// trusts only the origin CA to prove it was passed through.
+	deniedPayload, err := json.Marshal(map[string]string{"url": url})
+	if err != nil {
+		t.Fatalf("marshaling denied /post request: %v", err)
+	}
+	status, body := postThroughEgressActorUntil(t, ctx, router, actorRef, "/post", deniedPayload, notTransient)
 	if !dataplane.IsEgressPolicyDenied(status, string(body)) {
 		t.Fatalf("second POST to %s after policy update returned HTTP %d, want an egress-policy denial; body: %s", url, status, body)
+	}
+	if got := decodeEgressFetch(t, body); strings.Contains(got.Error, "x509") || strings.Contains(got.Error, "certificate") {
+		t.Fatalf("second POST to %s failed certificate verification instead of being denied; body: %s", url, body)
 	}
 
 	first := <-firstResult

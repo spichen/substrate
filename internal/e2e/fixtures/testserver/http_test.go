@@ -23,14 +23,17 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestHTTPHandlerDefaultsToEmptyHealthz(t *testing.T) {
-	server := startOriginServer(t, newHTTPHandler(""), "", "")
+	server := startOriginServer(t, newHTTPHandler("", ""), "", "")
 
 	client := &http.Client{Timeout: 2 * time.Second}
 	response, err := client.Get(server.httpURL + "/healthz")
@@ -52,7 +55,7 @@ func TestHTTPHandlerDefaultsToEmptyHealthz(t *testing.T) {
 }
 
 func TestHTTPHandlerEchoesRequestHeaders(t *testing.T) {
-	server := startOriginServer(t, newHTTPHandler(""), "", "")
+	server := startOriginServer(t, newHTTPHandler("", ""), "", "")
 
 	// Long enough to catch a truncated value, the size of a JWT.
 	token := strings.Repeat("eyJhbGciOiJFUzI1NiJ9.", 64)
@@ -99,7 +102,7 @@ func TestHTTPHandlerEchoesRequestHeaders(t *testing.T) {
 
 func TestHTTPSTestResponseUsesHTTP11AndVerifiedIdentity(t *testing.T) {
 	cert := writeOriginCertificate(t)
-	server := startOriginServer(t, newHTTPHandler("fixture response"), cert.certFile, cert.keyFile)
+	server := startOriginServer(t, newHTTPHandler("fixture response", ""), cert.certFile, cert.keyFile)
 
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(cert.caPEM) {
@@ -140,7 +143,7 @@ func TestHTTPSTestResponseUsesHTTP11AndVerifiedIdentity(t *testing.T) {
 }
 
 func TestHTTPHandlerFetch(t *testing.T) {
-	server := startOriginServer(t, newHTTPHandler(""), "", "")
+	server := startOriginServer(t, newHTTPHandler("", ""), "", "")
 	client := &http.Client{Timeout: 2 * time.Second}
 
 	t.Run("waits for full POST body before responding 200", func(t *testing.T) {
@@ -200,7 +203,7 @@ func TestHTTPHandlerFetch(t *testing.T) {
 
 func TestHTTPServesCleartextBesideTLS(t *testing.T) {
 	cert := writeOriginCertificate(t)
-	server := startOriginServer(t, newHTTPHandler("both schemes"), cert.certFile, cert.keyFile)
+	server := startOriginServer(t, newHTTPHandler("both schemes", ""), cert.certFile, cert.keyFile)
 
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(cert.caPEM) {
@@ -227,7 +230,7 @@ func TestHTTPServesCleartextBesideTLS(t *testing.T) {
 }
 
 func TestHTTPWithoutCertificateServesOnlyCleartext(t *testing.T) {
-	server := startOriginServer(t, newHTTPHandler(""), "", "")
+	server := startOriginServer(t, newHTTPHandler("", ""), "", "")
 	if server.httpsURL != "" {
 		t.Errorf("origin without a certificate serves HTTPS at %s, want cleartext only", server.httpsURL)
 	}
@@ -255,7 +258,7 @@ func getDial(t *testing.T, originURL, query string) (int, dialResult) {
 }
 
 func TestHTTPDialReachesListener(t *testing.T) {
-	server := startOriginServer(t, newHTTPHandler(""), "", "")
+	server := startOriginServer(t, newHTTPHandler("", ""), "", "")
 	target := listenLoopback(t)
 	t.Cleanup(func() { target.Close() })
 
@@ -273,7 +276,7 @@ func TestHTTPDialReachesListener(t *testing.T) {
 }
 
 func TestHTTPDialReportsUnreachableAddress(t *testing.T) {
-	server := startOriginServer(t, newHTTPHandler(""), "", "")
+	server := startOriginServer(t, newHTTPHandler("", ""), "", "")
 	// A port that was just listening and is now closed refuses the connection.
 	closed := listenLoopback(t)
 	address := closed.Addr().String()
@@ -289,7 +292,7 @@ func TestHTTPDialReportsUnreachableAddress(t *testing.T) {
 }
 
 func TestHTTPDialRejectsMalformedRequest(t *testing.T) {
-	server := startOriginServer(t, newHTTPHandler(""), "", "")
+	server := startOriginServer(t, newHTTPHandler("", ""), "", "")
 	for name, query := range map[string]string{
 		"missing address":  "",
 		"address w/o port": "address=127.0.0.1",
@@ -302,6 +305,34 @@ func TestHTTPDialRejectsMalformedRequest(t *testing.T) {
 				t.Errorf("GET /dial?%s status = %d, want %d", query, status, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestCredentialHandler(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("expected-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		header string
+		status int
+	}{
+		{"", http.StatusUnauthorized},
+		{"Bearer wrong-token", http.StatusUnauthorized},
+		{"Bearer expected-token", http.StatusNoContent},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/credential", nil)
+		req.Header.Set("Authorization", tc.header)
+		resp := httptest.NewRecorder()
+		newHTTPHandler("fixture response", path).ServeHTTP(resp, req)
+		if resp.Code != tc.status || resp.Body.Len() != 0 {
+			t.Errorf("header %q: status=%d body=%q, want status=%d and no body", tc.header, resp.Code, resp.Body.String(), tc.status)
+		}
+	}
+	resp := httptest.NewRecorder()
+	credentialHandler(path+"-missing")(resp, httptest.NewRequest(http.MethodGet, "/credential", nil))
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("unreadable credential file: status=%d, want 500", resp.Code)
 	}
 }
 
@@ -333,7 +364,7 @@ func sendConnect(t *testing.T, originURL, target string) int {
 }
 
 func TestHTTPAcceptConnectAnswersCONNECT(t *testing.T) {
-	server := startOriginServer(t, acceptingConnect(newHTTPHandler("")), "", "")
+	server := startOriginServer(t, acceptingConnect(newHTTPHandler("", "")), "", "")
 	if status := sendConnect(t, server.httpURL, "example.com:443"); status != http.StatusOK {
 		t.Errorf("CONNECT status = %d, want %d", status, http.StatusOK)
 	}
@@ -350,7 +381,7 @@ func TestHTTPAcceptConnectAnswersCONNECT(t *testing.T) {
 }
 
 func TestHTTPRefusesCONNECTByDefault(t *testing.T) {
-	server := startOriginServer(t, newHTTPHandler(""), "", "")
+	server := startOriginServer(t, newHTTPHandler("", ""), "", "")
 	if status := sendConnect(t, server.httpURL, "example.com:443"); status/100 == 2 {
 		t.Errorf("CONNECT status = %d, want the origin not to open a tunnel", status)
 	}

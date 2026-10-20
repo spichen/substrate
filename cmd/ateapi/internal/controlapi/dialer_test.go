@@ -49,6 +49,22 @@ const testAteletSPIFFEID = "spiffe://cluster.local/ns/ate-system/sa/atelet"
 // ateletPort is the port every atelet dial target should carry.
 var ateletPort = strconv.Itoa(atelet.DefaultPort)
 
+func TestAteletDialerInsecureRequiresOptIn(t *testing.T) {
+	secure := NewAteletDialer(nil, testAteletSPIFFEID, "", "")
+	if _, err := secure.dialCredentials("pod-uid"); err == nil {
+		t.Fatal("secure dialer accepted empty credential paths")
+	}
+
+	insecureDialer := NewAteletDialer(nil, testAteletSPIFFEID, "", "", WithInsecureCredentials())
+	creds, err := insecureDialer.dialCredentials("pod-uid")
+	if err != nil {
+		t.Fatalf("insecure dial credentials: %v", err)
+	}
+	if got := creds.Info().SecurityProtocol; got != "insecure" {
+		t.Fatalf("security protocol = %q, want insecure", got)
+	}
+}
+
 // makeTestCA mints a self-signed CA and returns it along with an X.509 bundle
 // containing it as the sole authority for the cluster.local trust domain.
 func makeTestCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey, *x509bundle.Bundle) {

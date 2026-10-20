@@ -208,7 +208,7 @@ The actor still reports `RUNNING` after this record; nothing moves it to `CRASHE
 
 #### The same records over OTLP
 
-With `OTEL_LOGS_EXPORTER=otlp` these records go out as OTLP log events instead of stdout, so a collector reads them without knowing substrate's stdout envelope. Unset or `none`, which is what every environment but kind uses today, keeps them on stdout. `otlp,console` writes both, as kind does for debugging. `console` here is the component's own JSON log line, not the OTel SDK's console exporter format. The value is a comma-separated list: names are trimmed, lowercased, and counted once, and an unknown or empty item logs a warning and is skipped while the rest apply. `none` with an exporter, or a value that names no known exporter, logs a warning and keeps the default, `none`. ateapi emits the lifecycle events and the ateworkers the usage samples, on the same switch; the ateworkers export through [the ateworker relay](#the-ateworker-otlp-relay), which carries logs, traces, and metrics. atecontroller copies `OTEL_LOGS_EXPORTER` into each worker pod, so the kind ConfigMap sets the ateworkers to `otlp,console` too.
+With `OTEL_LOGS_EXPORTER=otlp` these records go out as OTLP log events instead of stdout, so a collector reads them without knowing substrate's stdout envelope. Unset or `none` keeps them on stdout. The Helm chart selects `otlp` when `otel.logs.enabled` is true and a logs endpoint resolves. `otlp,console` writes both, as kind does for debugging. `console` here is the component's own JSON log line, not the OTel SDK's console exporter format. The value is a comma-separated list: names are trimmed, lowercased, and counted once, and an unknown or empty item logs a warning and is skipped while the rest apply. `none` with an exporter, or a value that names no known exporter, logs a warning and keeps the default, `none`. ateapi emits lifecycle events and the ateworkers usage samples, on the same switch. The ateworkers export through [the ateworker relay](#the-ateworker-otlp-relay), which carries logs, traces, and metrics. atecontroller copies `OTEL_LOGS_EXPORTER` into each worker pod, so the same selection applies to ateapi and the ateworkers.
 
 Three `event.name` values, which is the OTLP LogRecord's own field rather than an attribute:
 
@@ -453,7 +453,7 @@ Telemetry is emitted the same way everywhere; only the backend differs between a
 | Path | service → in-cluster `opentelemetry-collector` | service → Google Managed Prometheus (GMP) |
 | Metrics | collector Prometheus exporter on `:8889` | Google Cloud Monitoring |
 | Traces | Jaeger UI | Google Cloud Trace |
-| Logs | pod stdout; the [actor events](#the-same-records-over-otlp), ateapi's lifecycle records and the ateworkers' usage samples, also to the collector's `debug` exporter | pod stdout. No OTLP logs: `OTEL_LOGS_EXPORTER` is unset |
+| Logs | pod stdout; the [actor events](#the-same-records-over-otlp), ateapi's lifecycle records and the ateworkers' usage samples, also to the collector's `debug` exporter | pod stdout. No OTLP logs unless `OTEL_LOGS_EXPORTER` is set |
 | Dashboards | Not supported | Google Cloud Monitoring (see [Dashboards](#5-dashboards)) |
 
 > In Kind, `ateapi`, `atelet`, `ate-controller`, and `atenet-router` are pointed at the in-cluster collector, and the controller propagates the endpoint to the worker pods it creates, so all component telemetry lands locally.

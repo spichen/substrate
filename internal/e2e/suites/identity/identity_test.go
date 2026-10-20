@@ -301,11 +301,17 @@ func createAndResumeActor(t *testing.T, ctx context.Context, clients *e2e.Client
 
 func whoami(t *testing.T, ctx context.Context, rc *e2e.RouterClient, id string) whoamiResponse {
 	t.Helper()
-	out, err := tryWhoami(ctx, rc, id)
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		out, err := tryWhoami(ctx, rc, id)
+		if err == nil {
+			return out
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
 	}
-	return out
 }
 
 // lookup asks the probe to resolve host from inside the actor.

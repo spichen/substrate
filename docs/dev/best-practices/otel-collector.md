@@ -437,14 +437,15 @@ lists instead of the base file, for a worked example.
 **Substrate exports one thing over OTLP: the actor events**, ateapi's
 lifecycle records and the ateworkers' usage samples, through
 `serverboot.InitLogging`. `OTEL_LOGS_EXPORTER=otlp` sends them over OTLP
-instead of stdout, and `otlp,console` to both; only the kind overlay sets it, to
-`otlp,console`. See
+instead of stdout, and `otlp,console` to both. The kind overlay selects
+`otlp,console`; the Helm chart selects `otlp` when `otel.logs.enabled` is true
+and a logs endpoint resolves. See
 [the same records over OTLP](../../observability.md#the-same-records-over-otlp).
 
 Everything else is stdout. `serverboot.InitLogger` writes structured JSON there,
 and `ateworker` wraps actor container output with the `ate.*` metadata labels
 described in [Actor Observability](../../observability.md). The ateworker relay
-carries logs, traces, and metrics.
+carries logs, traces, and metrics, including the ateworkers' actor usage events.
 
 Those labels sit in a nested group (`labels`, or `logging.googleapis.com/labels`
 on GKE, where the key promotes the group into `LogEntry.labels`). A filelog

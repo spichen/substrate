@@ -35,6 +35,8 @@ type AtenetDataplane interface {
 	IsRetryableParkingBudgetExhaustion(status int, body string) bool
 	ParkingBudgetStatus() int
 	IsEgressPolicyDenied(status int, body string) bool
+	EgressUpgradeDeniedBody() string
+	EgressConnectDeniedResponse() (int, string)
 	PlatformMetricPrefixes([]string) []string
 	RouteDurationSeen(context.Context, string) (bool, error)
 	ScrapeMetrics(context.Context) (string, error)
@@ -75,6 +77,14 @@ func (envoyAtenetDataplane) IsRetryableParkingBudgetExhaustion(status int, body 
 }
 
 func (envoyAtenetDataplane) ParkingBudgetStatus() int { return http.StatusServiceUnavailable }
+
+func (envoyAtenetDataplane) EgressUpgradeDeniedBody() string {
+	return "WebSocket egress is not supported"
+}
+
+func (envoyAtenetDataplane) EgressConnectDeniedResponse() (int, string) {
+	return http.StatusForbidden, "CONNECT egress is not supported"
+}
 
 func (envoyAtenetDataplane) IsEgressPolicyDenied(status int, body string) bool {
 	return (status == http.StatusForbidden && strings.Contains(body, "egress denied")) ||
@@ -136,10 +146,18 @@ func (agentGatewayAtenetDataplane) NewParkingObserver(context.Context) (ParkingO
 }
 
 func (agentGatewayAtenetDataplane) IsRetryableParkingBudgetExhaustion(status int, body string) bool {
-	return status == http.StatusGatewayTimeout && strings.Contains(body, "request timed out")
+	return status == http.StatusServiceUnavailable && strings.Contains(body, "no worker has room for the actor")
 }
 
-func (agentGatewayAtenetDataplane) ParkingBudgetStatus() int { return http.StatusGatewayTimeout }
+func (agentGatewayAtenetDataplane) ParkingBudgetStatus() int { return http.StatusServiceUnavailable }
+
+func (agentGatewayAtenetDataplane) EgressUpgradeDeniedBody() string {
+	return "HTTP upgrades, including CONNECT, are denied for actor egress"
+}
+
+func (agentGatewayAtenetDataplane) EgressConnectDeniedResponse() (int, string) {
+	return http.StatusMethodNotAllowed, "method not allowed"
+}
 
 func (agentGatewayAtenetDataplane) IsEgressPolicyDenied(status int, body string) bool {
 	return status == http.StatusForbidden && strings.Contains(body, "actor egress policy denied")

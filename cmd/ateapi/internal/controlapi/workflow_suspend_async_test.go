@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store/storetest"
+	"go.ate.dev/substrate/cmd/ateapi/internal/workercache"
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/ateattr"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
@@ -196,6 +197,10 @@ func TestSuspendActorAsync_Finalized_RecordsFidelity(t *testing.T) {
 			st := newTestPersistence(t)
 			seedSuspendTemplate(t, ctx, st, &ateapipb.SnapshotConfig{PreferredFidelity: tc.preferred})
 			w, _ := newWireCaptureWorkflow(t, st)
+			// Without a watch running, finalization must notify the scheduler itself.
+			w.workerCache = workercache.New(nil, 0)
+			var observed *ateapipb.Worker
+			w.workerCache.AddHandler(func(worker *ateapipb.Worker) { observed = worker })
 			actorRef := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
 
 			wantRuntime := &ateapipb.SandboxRuntime{
@@ -255,6 +260,16 @@ func TestSuspendActorAsync_Finalized_RecordsFidelity(t *testing.T) {
 			}
 			if a := firstAssignment(t, st, wireTestAssignment().GetWorker().GetName()); a != nil {
 				t.Errorf("worker assignment = %v, want released", a)
+			}
+			if observed == nil {
+				t.Fatal("worker cache was not notified of the released capacity")
+			}
+			released, err := st.GetWorker(ctx, wireTestAssignment().GetWorker().GetName())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(released, observed, protocmp.Transform()); diff != "" {
+				t.Errorf("cached worker differs from released worker (-want +got):\n%s", diff)
 			}
 		})
 	}

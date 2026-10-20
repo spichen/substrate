@@ -21,6 +21,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -55,7 +56,7 @@ const defaultDialTimeout = 3 * time.Second
 // The /fetch handler for e2e tests that need test requests with bodies.
 // /dial reports whether this pod can open a TCP connection to an address; see
 // dial.
-func newHTTPHandler(body string) http.Handler {
+func newHTTPHandler(body, authorizationFile string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -63,6 +64,9 @@ func newHTTPHandler(body string) http.Handler {
 			_, _ = io.WriteString(w, body)
 		}
 	})
+	if authorizationFile != "" {
+		mux.HandleFunc("/credential", credentialHandler(authorizationFile))
+	}
 	mux.HandleFunc("/echoheaders", func(w http.ResponseWriter, r *http.Request) {
 		echoed := echoedHeaders{Headers: make(map[string]string, len(r.Header))}
 		for name, values := range r.Header {
@@ -138,18 +142,19 @@ func dial(w http.ResponseWriter, r *http.Request) {
 
 func newHTTPCmd() *cobra.Command {
 	var (
-		listenAddress string
-		certFile      string
-		keyFile       string
-		body          string
-		acceptConnect bool
+		authorizationFile string
+		listenAddress     string
+		certFile          string
+		keyFile           string
+		body              string
+		acceptConnect     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "http",
 		Short: "Serve an HTTP/1.1 origin answering /healthz, /echoheaders, POST /fetch and /dial, and with --accept-connect any CONNECT.",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			handler := newHTTPHandler(body)
+			handler := newHTTPHandler(body, authorizationFile)
 			if acceptConnect {
 				handler = acceptingConnect(handler)
 			}
@@ -166,7 +171,23 @@ func newHTTPCmd() *cobra.Command {
 	cmd.Flags().StringVar(&listenAddress, "listen", ":8080", "Address the origin serves cleartext HTTP on.")
 	cmd.Flags().StringVar(&certFile, "tls-cert", "", "PEM certificate file; with --tls-key, also serves HTTPS on :8443.")
 	cmd.Flags().StringVar(&keyFile, "tls-key", "", "PEM private key file; with --tls-cert, also serves HTTPS on :8443.")
+	cmd.Flags().StringVar(&authorizationFile, "authorization-file", "", "Enable /credential, requiring a Bearer token matching this file.")
 	cmd.Flags().StringVar(&body, "body", "", "Response body for /healthz.")
 	cmd.Flags().BoolVar(&acceptConnect, "accept-connect", false, "Answer CONNECT requests 200, as a forward proxy would, without relaying anything.")
 	return cmd
+}
+
+func credentialHandler(path string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token, err := os.ReadFile(path)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if len(token) == 0 || r.Header.Get("Authorization") != "Bearer "+string(token) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
 }

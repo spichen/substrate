@@ -60,20 +60,24 @@ func TestActorDirectAccess(t *testing.T) {
 	})
 	t.Run("duplicate actor header rejected on plain HTTP", func(t *testing.T) {
 		actorRef := resources.ActorRef{Atespace: networkingAtespace, Name: actorName}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, router.BaseURL()+"/readyz", nil)
-		if err != nil {
-			t.Fatalf("creating request: %v", err)
-		}
-		req.Header.Add(atenet.TargetActorHeader, actorRef.String())
-		req.Header.Add(atenet.TargetActorHeader, "untrusted/actor")
-		resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
-		if err != nil {
-			t.Fatalf("sending request with duplicate actor headers: %v", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("duplicate actor header on plain HTTP returned %d, want 404; body: %s", resp.StatusCode, body)
+		for _, secondActor := range []string{actorRef.String(), "untrusted/actor"} {
+			t.Run(secondActor, func(t *testing.T) {
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, router.BaseURL()+"/readyz", nil)
+				if err != nil {
+					t.Fatalf("creating request: %v", err)
+				}
+				req.Header.Add(atenet.TargetActorHeader, actorRef.String())
+				req.Header.Add(atenet.TargetActorHeader, secondActor)
+				resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+				if err != nil {
+					t.Fatalf("sending request with duplicate actor headers: %v", err)
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != http.StatusNotFound {
+					body, _ := io.ReadAll(resp.Body)
+					t.Fatalf("duplicate actor header on plain HTTP returned %d, want 404; body: %s", resp.StatusCode, body)
+				}
+			})
 		}
 	})
 }
@@ -376,9 +380,12 @@ func assertEgressGatewayConnect(t *testing.T, ctx context.Context, since metav1.
 				}
 				return true
 			case "agentgateway":
+				target, _ := accessLogField(line.text, "target")
+				tunnelActor, _ := accessLogField(line.text, "actor_name")
+				tunnelSpace, _ := accessLogField(line.text, "atespace")
 				if strings.Contains(line.text, "CONNECT tunnel terminated") &&
-					strings.Contains(line.text, "target=") &&
-					strings.Contains(line.text, ":"+port) {
+					strings.HasSuffix(target, ":"+port) &&
+					tunnelActor == actorName && tunnelSpace == atespace {
 					t.Logf("egress gateway tunneled the request: %s", line.text)
 					return true
 				}
@@ -957,9 +964,12 @@ func assertProtocolGateway(t *testing.T, ctx context.Context, since metav1.Time,
 	t.Helper()
 	actorRef := resources.ActorRef{Atespace: networkingAtespace, Name: actorName}
 	identity := resources.WorkerForActorSPIFFEID(actorRef).String()
+	// The authenticated CONNECT record identifies the actor and destination.
+	// Callers separately verify the HTTPS response using only the gateway's CA,
+	// so a successful TLS handshake proves interception rather than passthrough.
 	waitForAccessLog(t, ctx, since, "successful gateway traffic for "+identity+" to "+authority, func(lines []gatewayAccessLogLine) bool {
 		for _, entry := range lines {
-			if protocolGatewayAccessLogMatches(entry, actorRef, authority, false) {
+			if protocolGatewayAccessLogMatches(entry, actorRef, authority) {
 				t.Logf("gateway evidence: %s", entry.text)
 				return true
 			}
@@ -968,7 +978,7 @@ func assertProtocolGateway(t *testing.T, ctx context.Context, since metav1.Time,
 	})
 }
 
-func protocolGatewayAccessLogMatches(entry gatewayAccessLogLine, actorRef resources.ActorRef, authority string, allowOpaque bool) bool {
+func protocolGatewayAccessLogMatches(entry gatewayAccessLogLine, actorRef resources.ActorRef, authority string) bool {
 	switch entry.container {
 	case "envoy":
 		gotAuthority, _ := accessLogField(entry.text, "authority")
@@ -984,11 +994,9 @@ func protocolGatewayAccessLogMatches(entry gatewayAccessLogLine, actorRef resour
 		}
 	case "agentgateway":
 		gotAuthority, _ := accessLogField(entry.text, "substrate.connect.authority")
-		if allowOpaque && strings.Contains(entry.text, "CONNECT tunnel terminated") {
-			// Baseline TCP routes carry opaque CONNECT traffic and therefore do
-			// not emit an HTTP status. The accepted CONNECT record identifies the
-			// authenticated actor and destination; the operation assertion above
-			// supplies end-to-end success.
+		if strings.Contains(entry.text, "CONNECT tunnel terminated") {
+			// This record is emitted when the authenticated CONNECT is accepted,
+			// before the gateway selects interception or passthrough.
 			target, targetOK := accessLogField(entry.text, "target")
 			tunnelActor, actorOK := accessLogField(entry.text, "actor_name")
 			tunnelSpace, spaceOK := accessLogField(entry.text, "atespace")
