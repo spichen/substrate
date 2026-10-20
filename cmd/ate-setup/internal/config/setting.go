@@ -149,6 +149,10 @@ var Registry = []Setting{
 		Key: "storage.bucketName", Env: "BUCKET_NAME", Flag: "storage-bucket-name", Kind: KindString,
 		Usage: "Snapshot bucket the demos are templated with",
 	},
+	{
+		Key: "storage.snapshotLocation", Env: "SNAPSHOT_LOCATION", Flag: "snapshot-location", Kind: KindString,
+		Usage: "Cluster-wide object-storage URI ate-api-server stores snapshots under, for example gs://BUCKET/PREFIX/ (required if the PerTemplateSnapshotLocation preview gate is not enabled)",
+	},
 
 	{
 		Key: "atenet.dataplane", Env: "ATE_ATENET_DATAPLANE", Flag: "atenet-dataplane", Kind: KindString,
@@ -300,9 +304,19 @@ var Registry = []Setting{
 		Key: "ingressAuthMode", Env: "ATE_INGRESS_AUTH_MODE", Flag: "ingress-auth-mode", Kind: KindString,
 		Default: IngressAuthDeprecatedInsecure,
 		Usage: "How the ingress router authenticates clients: deprecated-insecure or static-mtls. Both check a " +
-			"client certificate on the router's TLS ports against the podidentity CA and the SPIFFE IDs listed in " +
-			"manifests/ate-install/atenet-router.yaml; deprecated-insecure also lets through TLS clients without one " +
-			"and serves plaintext ports, while static-mtls requires the certificate and --atenet-dataplane=envoy",
+			"client certificate on the router's TLS ports against the podidentity CA and --ingress-allowed-spiffe-ids; " +
+			"deprecated-insecure also lets through TLS clients without one and serves plaintext ports, while " +
+			"static-mtls requires the certificate and --atenet-dataplane=envoy",
+	},
+	{
+		// Comma-separated, as the router's own flag is. The registry has no
+		// list kind, so the value is carried as written and split where it is
+		// used.
+		Key: "ingressAllowedSPIFFEIDs", Env: "ATE_INGRESS_ALLOWED_SPIFFE_IDS", Flag: "ingress-allowed-spiffe-ids",
+		Kind: KindString,
+		Usage: "SPIFFE IDs (exact match, comma-separated) of the clients the ingress router lets reach actors over " +
+			"its TLS ports; any listed client may reach any actor. Required to deploy the router with " +
+			"--atenet-dataplane=envoy. The podidentity signer issues spiffe://cluster.local/ns/<namespace>/sa/<service-account>",
 	},
 	{
 		Key: "otlpEndpoint", Env: "ATE_OTLP_ENDPOINT", Flag: "otlp-endpoint", Kind: KindString,

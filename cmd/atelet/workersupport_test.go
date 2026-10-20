@@ -163,12 +163,10 @@ func TestRegisterWorker(t *testing.T) {
 	}{{
 		name: "records what the worker says",
 		req: &ateletpb.RegisterWorkerRequest{
-			Capacity: &ateletpb.WorkerResources{Actors: 4, Resources: &ateletpb.Resources{
-				Limits: []*ateletpb.Limits{{Name: "cpu", Quantity: "2"}, {Name: "memory", Quantity: "4Gi"}},
-			}},
+			Capacity:       &ateletpb.WorkerResources{Actors: 4, CpuMillicores: 2000, MemoryBytes: 4 << 30},
 			DefaultRuntime: reqDefault,
 		},
-		wantForwarded: forwarded(&ateapipb.WorkerResources{Actors: 4, Resources: resources.CPUMemory(2000, 4294967296)}),
+		wantForwarded: forwarded(&ateapipb.WorkerResources{Actors: 4, CpuMillicores: 2000, MemoryBytes: 4294967296}),
 	}, {
 		name: "forwards restorable runtimes",
 		req: &ateletpb.RegisterWorkerRequest{
@@ -182,15 +180,13 @@ func TestRegisterWorker(t *testing.T) {
 		req:           &ateletpb.RegisterWorkerRequest{Capacity: &ateletpb.WorkerResources{Actors: 1}, DefaultRuntime: reqDefault},
 		wantForwarded: forwarded(&ateapipb.WorkerResources{Actors: 1}),
 	}, {
-		name:          "forwards empty resources",
-		req:           &ateletpb.RegisterWorkerRequest{Capacity: &ateletpb.WorkerResources{Resources: &ateletpb.Resources{}}, DefaultRuntime: reqDefault},
-		wantForwarded: forwarded(&ateapipb.WorkerResources{Resources: &ateapipb.Resources{}}),
+		name:          "forwards empty capacity",
+		req:           &ateletpb.RegisterWorkerRequest{Capacity: &ateletpb.WorkerResources{}, DefaultRuntime: reqDefault},
+		wantForwarded: forwarded(&ateapipb.WorkerResources{}),
 	}, {
 		name: "rejects invalid capacity without forwarding",
 		req: &ateletpb.RegisterWorkerRequest{
-			Capacity: &ateletpb.WorkerResources{Resources: &ateletpb.Resources{
-				Limits: []*ateletpb.Limits{{Name: "gpu", Quantity: "1"}},
-			}},
+			Capacity:       &ateletpb.WorkerResources{CpuMillicores: -1},
 			DefaultRuntime: reqDefault,
 		},
 		wantCode: codes.InvalidArgument,
@@ -240,8 +236,17 @@ func TestRegisterWorker(t *testing.T) {
 type fakeSuspendService struct {
 	ateapipb.WorkerServiceClient
 
-	got []*ateapipb.RequestActorSuspendRequest
-	err error
+	got        []*ateapipb.RequestActorSuspendRequest
+	gotCrashed []*ateapipb.ReportActorCrashedRequest
+	err        error
+}
+
+func (s *fakeSuspendService) ReportActorCrashed(_ context.Context, in *ateapipb.ReportActorCrashedRequest, _ ...grpc.CallOption) (*ateapipb.ReportActorCrashedResponse, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	s.gotCrashed = append(s.gotCrashed, in)
+	return &ateapipb.ReportActorCrashedResponse{}, nil
 }
 
 func (s *fakeSuspendService) RequestActorSuspend(_ context.Context, in *ateapipb.RequestActorSuspendRequest, _ ...grpc.CallOption) (*ateapipb.RequestActorSuspendResponse, error) {
@@ -470,5 +475,46 @@ func TestGetActorEgressPolicy(t *testing.T) {
 				t.Errorf("returned policy mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestReportActorCrashedNamesTheCallingWorker(t *testing.T) {
+	workers := &fakeSuspendService{}
+	svc := &workerSupportServer{workers: workers}
+
+	if _, err := svc.ReportActorCrashed(workerContext(t, "pod-a"), &ateletpb.ReportActorCrashedRequest{
+		ActorAtespace: "team-a",
+		ActorName:     "actor-1",
+		ActorUid:      "01234567-89ab-cdef-0123-456789abcdef",
+		Message:       "cloud-hypervisor exited",
+	}); err != nil {
+		t.Fatalf("ReportActorCrashed() failed: %v", err)
+	}
+	want := []*ateapipb.ReportActorCrashedRequest{{
+		Worker:   &ateapipb.ObjectRef{Name: "pod-a"},
+		Actor:    &ateapipb.ObjectRef{Atespace: "team-a", Name: "actor-1"},
+		ActorUid: "01234567-89ab-cdef-0123-456789abcdef",
+		Message:  "cloud-hypervisor exited",
+	}}
+	if diff := cmp.Diff(want, workers.gotCrashed, protocmp.Transform()); diff != "" {
+		t.Errorf("forwarded request mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestReportActorCrashedRequiresACertificate(t *testing.T) {
+	workers := &fakeSuspendService{}
+	svc := &workerSupportServer{workers: workers}
+
+	_, err := svc.ReportActorCrashed(context.Background(), &ateletpb.ReportActorCrashedRequest{
+		ActorAtespace: "team-a",
+		ActorName:     "actor-1",
+		ActorUid:      "01234567-89ab-cdef-0123-456789abcdef",
+		Message:       "cloud-hypervisor exited",
+	})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Errorf("unauthenticated report returned %v, want Unauthenticated", err)
+	}
+	if len(workers.gotCrashed) != 0 {
+		t.Errorf("unauthenticated report was still forwarded: %v", workers.gotCrashed)
 	}
 }

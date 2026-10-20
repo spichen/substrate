@@ -784,7 +784,7 @@ func Validate_ActorStatus(
 			if earlyReturn {
 				return // do not proceed
 			}
-			if e := validate.Maximum(ctx, op, fldPath, obj, oldObj, 9); len(e) != 0 {
+			if e := validate.Maximum(ctx, op, fldPath, obj, oldObj, 7); len(e) != 0 {
 				errs = append(errs, e...)
 			}
 			if e := validate.Minimum(ctx, op, fldPath, obj, oldObj, 1); len(e) != 0 {
@@ -836,7 +836,7 @@ func Validate_ActorStatus(
 	{ // field ateapipb.ActorStatus.ExternalVolumes
 		fn := func(
 			fldPath *field.Path,
-			obj, oldObj []*ateapipb.ExternalVolume,
+			obj, oldObj *ateapipb.ExternalVolumes,
 			oldValueCorrelated bool) (errs field.ErrorList) {
 			// don't revalidate unchanged data
 			if oldValueCorrelated && op.Type == operation.Update {
@@ -846,34 +846,18 @@ func Validate_ActorStatus(
 			}
 			// call field-attached validations
 			earlyReturn := false
-			if e := validate.PtrSliceNoNils[ateapipb.ExternalVolume](ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
-				errs = append(errs, e...)
-				earlyReturn = true
-			}
-			if e := validate.MaxItems(ctx, op, fldPath, obj, oldObj, 32).MarkShortCircuit(); len(e) != 0 {
-				errs = append(errs, e...)
-				earlyReturn = true
-			}
-			if e := validate.OptionalSlice(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+			if e := validate.OptionalPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
 				earlyReturn = true
 			}
 			if earlyReturn {
 				return // do not proceed
 			}
-			// lists with map semantics require unique keys
-			if e := validate.PtrSliceUnique(ctx, op, fldPath, obj, oldObj,
-				func(a *ateapipb.ExternalVolume, b *ateapipb.ExternalVolume) bool { return a.Name == b.Name }); len(e) != 0 {
-				errs = append(errs, e...)
-			}
-			// iterate the list and call the type's validation function
-			if e := validate.EachPtrSliceVal(ctx, op, fldPath, obj, oldObj,
-				func(a *ateapipb.ExternalVolume, b *ateapipb.ExternalVolume) bool { return a.Name == b.Name }, ateDeepEqual, Validate_ExternalVolume); len(e) != 0 {
-				errs = append(errs, e...)
-			}
+			// call the type's validation function
+			errs = append(errs, Validate_ExternalVolumes(ctx, op, fldPath, obj, oldObj)...)
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.ActorStatus) []*ateapipb.ExternalVolume {
+			func(oldObj *ateapipb.ActorStatus) *ateapipb.ExternalVolumes {
 				return oldObj.ExternalVolumes
 			})
 		errs = append(errs, fn(fldPath.Child("external_volumes"), obj.ExternalVolumes, oldVal, oldObj != nil)...)
@@ -1220,8 +1204,7 @@ func Validate_ActorTemplate(
 			}
 			// call field-attached validations
 			earlyReturn := false
-			if e := validate.RequiredPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
-				errs = append(errs, e...)
+			if e := validate.OptionalPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
 				earlyReturn = true
 			}
 			if earlyReturn {
@@ -1241,7 +1224,7 @@ func Validate_ActorTemplate(
 	{ // field ateapipb.ActorTemplate.Resources
 		fn := func(
 			fldPath *field.Path,
-			obj, oldObj *ateapipb.Resources,
+			obj, oldObj *ateapipb.ResourceRequirements,
 			oldValueCorrelated bool) (errs field.ErrorList) {
 			// don't revalidate unchanged data
 			if oldValueCorrelated && op.Type == operation.Update {
@@ -1263,11 +1246,11 @@ func Validate_ActorTemplate(
 				errs = append(errs, e...)
 			}
 			// call the type's validation function
-			errs = append(errs, Validate_Resources(ctx, op, fldPath, obj, oldObj)...)
+			errs = append(errs, Validate_ResourceRequirements(ctx, op, fldPath, obj, oldObj)...)
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.ActorTemplate) *ateapipb.Resources {
+			func(oldObj *ateapipb.ActorTemplate) *ateapipb.ResourceRequirements {
 				return oldObj.Resources
 			})
 		errs = append(errs, fn(fldPath.Child("resources"), obj.Resources, oldVal, oldObj != nil)...)
@@ -1963,7 +1946,7 @@ func Validate_Container(
 	{ // field ateapipb.Container.Resources
 		fn := func(
 			fldPath *field.Path,
-			obj, oldObj *ateapipb.Resources,
+			obj, oldObj *ateapipb.ResourceRequirements,
 			oldValueCorrelated bool) (errs field.ErrorList) {
 			// don't revalidate unchanged data
 			if oldValueCorrelated && op.Type == operation.Update {
@@ -1980,11 +1963,11 @@ func Validate_Container(
 				return // do not proceed
 			}
 			// call the type's validation function
-			errs = append(errs, Validate_Resources(ctx, op, fldPath, obj, oldObj)...)
+			errs = append(errs, Validate_ResourceRequirements(ctx, op, fldPath, obj, oldObj)...)
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.Container) *ateapipb.Resources {
+			func(oldObj *ateapipb.Container) *ateapipb.ResourceRequirements {
 				return oldObj.Resources
 			})
 		errs = append(errs, fn(fldPath.Child("resources"), obj.Resources, oldVal, oldObj != nil)...)
@@ -2749,34 +2732,6 @@ func Validate_DeleteActorRequest(
 				return oldObj.Actor
 			})
 		errs = append(errs, fn(fldPath.Child("actor"), obj.Actor, oldVal, oldObj != nil)...)
-	}
-
-	{ // field ateapipb.DeleteActorRequest.AnyState
-		fn := func(
-			fldPath *field.Path,
-			obj, oldObj *bool,
-			oldValueCorrelated bool) (errs field.ErrorList) {
-			// don't revalidate unchanged data
-			if oldValueCorrelated && op.Type == operation.Update {
-				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
-					return nil
-				}
-			}
-			// call field-attached validations
-			earlyReturn := false
-			if e := validate.OptionalValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
-				earlyReturn = true
-			}
-			if earlyReturn {
-				return // do not proceed
-			}
-			return
-		}
-		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.DeleteActorRequest) *bool {
-				return &oldObj.AnyState
-			})
-		errs = append(errs, fn(fldPath.Child("any_state"), &obj.AnyState, oldVal, oldObj != nil)...)
 	}
 
 	{ // field ateapipb.DeleteActorRequest.Options
@@ -3721,13 +3676,64 @@ func Validate_EnvVar(
 	return errs
 }
 
-// Validate_ExternalVolume validates an instance of ExternalVolume according
-// to declarative validation rules in the API schema.
-func Validate_ExternalVolume(
-	ctx context.Context, op operation.Operation, fldPath *field.Path,
-	obj, oldObj *ateapipb.ExternalVolume) (errs field.ErrorList) {
+var unionMembershipFor_go_ate_dev_substrate_pkg_proto_ateapipb_ExternalVolumeSource_ = validate.NewUnionMembership(validate.NewUnionMember("template"))
 
-	{ // field ateapipb.ExternalVolume.Name
+// Validate_ExternalVolumeSource validates an instance of ExternalVolumeSource according
+// to declarative validation rules in the API schema.
+func Validate_ExternalVolumeSource(
+	ctx context.Context, op operation.Operation, fldPath *field.Path,
+	obj, oldObj *ateapipb.ExternalVolumeSource) (errs field.ErrorList) {
+
+	if e := validate.Union(ctx, op, fldPath, obj, oldObj, unionMembershipFor_go_ate_dev_substrate_pkg_proto_ateapipb_ExternalVolumeSource_,
+		func(obj *ateapipb.ExternalVolumeSource) bool {
+			if obj == nil {
+				return false
+			}
+			return obj.Template != nil
+		}); len(e) != 0 {
+		errs = append(errs, e...)
+	}
+
+	{ // field ateapipb.ExternalVolumeSource.Template
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *ateapipb.ExternalVolumeTemplate,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if ateDeepEqual(obj, oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.OptionalPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			// call the type's validation function
+			errs = append(errs, Validate_ExternalVolumeTemplate(ctx, op, fldPath, obj, oldObj)...)
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ExternalVolumeSource) *ateapipb.ExternalVolumeTemplate {
+				return oldObj.Template
+			})
+		errs = append(errs, fn(fldPath.Child("template"), obj.Template, oldVal, oldObj != nil)...)
+	}
+
+	return errs
+}
+
+// Validate_ExternalVolumeStatus validates an instance of ExternalVolumeStatus according
+// to declarative validation rules in the API schema.
+func Validate_ExternalVolumeStatus(
+	ctx context.Context, op operation.Operation, fldPath *field.Path,
+	obj, oldObj *ateapipb.ExternalVolumeStatus) (errs field.ErrorList) {
+
+	{ // field ateapipb.ExternalVolumeStatus.Name
 		fn := func(
 			fldPath *field.Path,
 			obj, oldObj *string,
@@ -3758,13 +3764,13 @@ func Validate_ExternalVolume(
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.ExternalVolume) *string {
+			func(oldObj *ateapipb.ExternalVolumeStatus) *string {
 				return &oldObj.Name
 			})
 		errs = append(errs, fn(fldPath.Child("name"), &obj.Name, oldVal, oldObj != nil)...)
 	}
 
-	{ // field ateapipb.ExternalVolume.StorageVolumeId
+	{ // field ateapipb.ExternalVolumeStatus.StorageVolumeId
 		fn := func(
 			fldPath *field.Path,
 			obj, oldObj *string,
@@ -3789,7 +3795,7 @@ func Validate_ExternalVolume(
 				return // do not proceed
 			}
 			// custom validation
-			if e := ValidateCustom_ExternalVolume_StorageVolumeId(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
+			if e := ValidateCustom_ExternalVolumeStatus_StorageVolumeId(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
 				errs = append(errs, e...)
 			}
 			if e := validate.MaxLength(ctx, op, fldPath, obj, oldObj, 256); len(e) != 0 {
@@ -3798,13 +3804,13 @@ func Validate_ExternalVolume(
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.ExternalVolume) *string {
+			func(oldObj *ateapipb.ExternalVolumeStatus) *string {
 				return &oldObj.StorageVolumeId
 			})
 		errs = append(errs, fn(fldPath.Child("storage_volume_id"), &obj.StorageVolumeId, oldVal, oldObj != nil)...)
 	}
 
-	{ // field ateapipb.ExternalVolume.VolumeType
+	{ // field ateapipb.ExternalVolumeStatus.VolumeType
 		fn := func(
 			fldPath *field.Path,
 			obj, oldObj *string,
@@ -3830,7 +3836,7 @@ func Validate_ExternalVolume(
 				return // do not proceed
 			}
 			// custom validation
-			if e := ValidateCustom_ExternalVolume_VolumeType(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
+			if e := ValidateCustom_ExternalVolumeStatus_VolumeType(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
 				errs = append(errs, e...)
 			}
 			if e := validate.MaxLength(ctx, op, fldPath, obj, oldObj, 253); len(e) != 0 {
@@ -3839,13 +3845,13 @@ func Validate_ExternalVolume(
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.ExternalVolume) *string {
+			func(oldObj *ateapipb.ExternalVolumeStatus) *string {
 				return &oldObj.VolumeType
 			})
 		errs = append(errs, fn(fldPath.Child("volume_type"), &obj.VolumeType, oldVal, oldObj != nil)...)
 	}
 
-	{ // field ateapipb.ExternalVolume.VolumeContext
+	{ // field ateapipb.ExternalVolumeStatus.VolumeContext
 		fn := func(
 			fldPath *field.Path,
 			obj, oldObj map[string]string,
@@ -3865,13 +3871,13 @@ func Validate_ExternalVolume(
 				return // do not proceed
 			}
 			// custom validation
-			if e := ValidateCustom_ExternalVolume_VolumeContext(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
+			if e := ValidateCustom_ExternalVolumeStatus_VolumeContext(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
 				errs = append(errs, e...)
 			}
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.ExternalVolume) map[string]string {
+			func(oldObj *ateapipb.ExternalVolumeStatus) map[string]string {
 				return oldObj.VolumeContext
 			})
 		errs = append(errs, fn(fldPath.Child("volume_context"), obj.VolumeContext, oldVal, oldObj != nil)...)
@@ -3886,10 +3892,10 @@ func Validate_ExternalVolumeTemplate(
 	ctx context.Context, op operation.Operation, fldPath *field.Path,
 	obj, oldObj *ateapipb.ExternalVolumeTemplate) (errs field.ErrorList) {
 
-	{ // field ateapipb.ExternalVolumeTemplate.Capacity
+	{ // field ateapipb.ExternalVolumeTemplate.CapacityBytes
 		fn := func(
 			fldPath *field.Path,
-			obj, oldObj *string,
+			obj, oldObj *int64,
 			oldValueCorrelated bool) (errs field.ErrorList) {
 			// don't revalidate unchanged data
 			if oldValueCorrelated && op.Type == operation.Update {
@@ -3906,20 +3912,16 @@ func Validate_ExternalVolumeTemplate(
 			if earlyReturn {
 				return // do not proceed
 			}
-			// custom validation
-			if e := ValidateCustom_ExternalVolumeTemplate_Capacity(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
-				errs = append(errs, e...)
-			}
-			if e := validate.MaxLength(ctx, op, fldPath, obj, oldObj, 32); len(e) != 0 {
+			if e := validate.Minimum(ctx, op, fldPath, obj, oldObj, 1); len(e) != 0 {
 				errs = append(errs, e...)
 			}
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.ExternalVolumeTemplate) *string {
-				return &oldObj.Capacity
+			func(oldObj *ateapipb.ExternalVolumeTemplate) *int64 {
+				return &oldObj.CapacityBytes
 			})
-		errs = append(errs, fn(fldPath.Child("capacity"), &obj.Capacity, oldVal, oldObj != nil)...)
+		errs = append(errs, fn(fldPath.Child("capacity_bytes"), &obj.CapacityBytes, oldVal, oldObj != nil)...)
 	}
 
 	{ // field ateapipb.ExternalVolumeTemplate.StorageClassName
@@ -3952,6 +3954,61 @@ func Validate_ExternalVolumeTemplate(
 				return &oldObj.StorageClassName
 			})
 		errs = append(errs, fn(fldPath.Child("storage_class_name"), &obj.StorageClassName, oldVal, oldObj != nil)...)
+	}
+
+	return errs
+}
+
+// Validate_ExternalVolumes validates an instance of ExternalVolumes according
+// to declarative validation rules in the API schema.
+func Validate_ExternalVolumes(
+	ctx context.Context, op operation.Operation, fldPath *field.Path,
+	obj, oldObj *ateapipb.ExternalVolumes) (errs field.ErrorList) {
+
+	{ // field ateapipb.ExternalVolumes.Volumes
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj []*ateapipb.ExternalVolumeStatus,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if ateDeepEqual(obj, oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.PtrSliceNoNils[ateapipb.ExternalVolumeStatus](ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if e := validate.MaxItems(ctx, op, fldPath, obj, oldObj, 32).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if e := validate.OptionalSlice(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			// lists with map semantics require unique keys
+			if e := validate.PtrSliceUnique(ctx, op, fldPath, obj, oldObj,
+				func(a *ateapipb.ExternalVolumeStatus, b *ateapipb.ExternalVolumeStatus) bool { return a.Name == b.Name }); len(e) != 0 {
+				errs = append(errs, e...)
+			}
+			// iterate the list and call the type's validation function
+			if e := validate.EachPtrSliceVal(ctx, op, fldPath, obj, oldObj,
+				func(a *ateapipb.ExternalVolumeStatus, b *ateapipb.ExternalVolumeStatus) bool { return a.Name == b.Name }, ateDeepEqual, Validate_ExternalVolumeStatus); len(e) != 0 {
+				errs = append(errs, e...)
+			}
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ExternalVolumes) []*ateapipb.ExternalVolumeStatus {
+				return oldObj.Volumes
+			})
+		errs = append(errs, fn(fldPath.Child("volumes"), obj.Volumes, oldVal, oldObj != nil)...)
 	}
 
 	return errs
@@ -5028,84 +5085,6 @@ func Validate_ImageVolumeSource(
 				return &oldObj.Reference
 			})
 		errs = append(errs, fn(fldPath.Child("reference"), &obj.Reference, oldVal, oldObj != nil)...)
-	}
-
-	return errs
-}
-
-// Validate_Limits validates an instance of Limits according
-// to declarative validation rules in the API schema.
-func Validate_Limits(
-	ctx context.Context, op operation.Operation, fldPath *field.Path,
-	obj, oldObj *ateapipb.Limits) (errs field.ErrorList) {
-
-	// custom validation
-	if e := ValidateCustom_Limits(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
-		errs = append(errs, e...)
-	}
-
-	{ // field ateapipb.Limits.Name
-		fn := func(
-			fldPath *field.Path,
-			obj, oldObj *string,
-			oldValueCorrelated bool) (errs field.ErrorList) {
-			// don't revalidate unchanged data
-			if oldValueCorrelated && op.Type == operation.Update {
-				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
-					return nil
-				}
-			}
-			// call field-attached validations
-			earlyReturn := false
-			if e := validate.RequiredValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
-				errs = append(errs, e...)
-				earlyReturn = true
-			}
-			if earlyReturn {
-				return // do not proceed
-			}
-			if e := validate.MaxLength(ctx, op, fldPath, obj, oldObj, 16); len(e) != 0 {
-				errs = append(errs, e...)
-			}
-			return
-		}
-		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.Limits) *string {
-				return &oldObj.Name
-			})
-		errs = append(errs, fn(fldPath.Child("name"), &obj.Name, oldVal, oldObj != nil)...)
-	}
-
-	{ // field ateapipb.Limits.Quantity
-		fn := func(
-			fldPath *field.Path,
-			obj, oldObj *string,
-			oldValueCorrelated bool) (errs field.ErrorList) {
-			// don't revalidate unchanged data
-			if oldValueCorrelated && op.Type == operation.Update {
-				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
-					return nil
-				}
-			}
-			// call field-attached validations
-			earlyReturn := false
-			if e := validate.RequiredValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
-				errs = append(errs, e...)
-				earlyReturn = true
-			}
-			if earlyReturn {
-				return // do not proceed
-			}
-			if e := validate.MaxLength(ctx, op, fldPath, obj, oldObj, 32); len(e) != 0 {
-				errs = append(errs, e...)
-			}
-			return
-		}
-		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.Limits) *string {
-				return &oldObj.Quantity
-			})
-		errs = append(errs, fn(fldPath.Child("quantity"), &obj.Quantity, oldVal, oldObj != nil)...)
 	}
 
 	return errs
@@ -6581,6 +6560,175 @@ func Validate_RegisterWorkerRequest(
 	return errs
 }
 
+// Validate_ReportActorCrashedRequest validates an instance of ReportActorCrashedRequest according
+// to declarative validation rules in the API schema.
+func Validate_ReportActorCrashedRequest(
+	ctx context.Context, op operation.Operation, fldPath *field.Path,
+	obj, oldObj *ateapipb.ReportActorCrashedRequest) (errs field.ErrorList) {
+
+	{ // field ateapipb.ReportActorCrashedRequest.Worker
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *ateapipb.ObjectRef,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if ateDeepEqual(obj, oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.RequiredPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			func() { // cohort = "atespace"
+				earlyReturn := false
+				if e := validate.Subfield(ctx, op, fldPath, obj, oldObj, "atespace",
+					func(o *ateapipb.ObjectRef) *string { return &o.Atespace }, validate.DirectEqual, validate.ForbiddenValue).MarkBeta().MarkShortCircuit(); len(e) != 0 {
+					errs = append(errs, e...)
+					earlyReturn = true
+				}
+				if e := validate.Subfield(ctx, op, fldPath, obj, oldObj, "atespace",
+					func(o *ateapipb.ObjectRef) *string { return &o.Atespace }, validate.DirectEqual, validate.OptionalValue).MarkBeta().MarkShortCircuit(); len(e) != 0 {
+					earlyReturn = true
+				}
+				if e := validate.Subfield(ctx, op, fldPath, obj, oldObj, "atespace",
+					func(o *ateapipb.ObjectRef) *string { return &o.Atespace }, validate.DirectEqual, validate.OptionalValue).MarkBeta().MarkShortCircuit(); len(e) != 0 {
+					earlyReturn = true
+				}
+				if earlyReturn {
+					return // do not proceed
+				}
+			}()
+			// call the type's validation function
+			errs = append(errs, Validate_ObjectRef(ctx, op, fldPath, obj, oldObj)...)
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ReportActorCrashedRequest) *ateapipb.ObjectRef {
+				return oldObj.Worker
+			})
+		errs = append(errs, fn(fldPath.Child("worker"), obj.Worker, oldVal, oldObj != nil)...)
+	}
+
+	{ // field ateapipb.ReportActorCrashedRequest.Actor
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *ateapipb.ObjectRef,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if ateDeepEqual(obj, oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.RequiredPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			func() { // cohort = "atespace"
+				earlyReturn := false
+				if e := validate.Subfield(ctx, op, fldPath, obj, oldObj, "atespace",
+					func(o *ateapipb.ObjectRef) *string { return &o.Atespace }, validate.DirectEqual, validate.RequiredValue).MarkShortCircuit(); len(e) != 0 {
+					errs = append(errs, e...)
+					earlyReturn = true
+				}
+				if e := validate.Subfield(ctx, op, fldPath, obj, oldObj, "atespace",
+					func(o *ateapipb.ObjectRef) *string { return &o.Atespace }, validate.DirectEqual, validate.OptionalValue).MarkShortCircuit(); len(e) != 0 {
+					earlyReturn = true
+				}
+				if earlyReturn {
+					return // do not proceed
+				}
+			}()
+			// call the type's validation function
+			errs = append(errs, Validate_ObjectRef(ctx, op, fldPath, obj, oldObj)...)
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ReportActorCrashedRequest) *ateapipb.ObjectRef {
+				return oldObj.Actor
+			})
+		errs = append(errs, fn(fldPath.Child("actor"), obj.Actor, oldVal, oldObj != nil)...)
+	}
+
+	{ // field ateapipb.ReportActorCrashedRequest.ActorUid
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *string,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.RequiredValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			if e := validate.UUID(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
+				errs = append(errs, e...)
+			}
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ReportActorCrashedRequest) *string {
+				return &oldObj.ActorUid
+			})
+		errs = append(errs, fn(fldPath.Child("actor_uid"), &obj.ActorUid, oldVal, oldObj != nil)...)
+	}
+
+	{ // field ateapipb.ReportActorCrashedRequest.Message
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *string,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.RequiredValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			if e := validate.MaxLength(ctx, op, fldPath, obj, oldObj, 4096); len(e) != 0 {
+				errs = append(errs, e...)
+			}
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ReportActorCrashedRequest) *string {
+				return &oldObj.Message
+			})
+		errs = append(errs, fn(fldPath.Child("message"), &obj.Message, oldVal, oldObj != nil)...)
+	}
+
+	return errs
+}
+
 // Validate_ReportActorSnapshotStateRequest validates an instance of ReportActorSnapshotStateRequest according
 // to declarative validation rules in the API schema.
 func Validate_ReportActorSnapshotStateRequest(
@@ -7059,16 +7207,16 @@ func Validate_ResourceMetadata(
 	return errs
 }
 
-// Validate_Resources validates an instance of Resources according
+// Validate_ResourceRequirements validates an instance of ResourceRequirements according
 // to declarative validation rules in the API schema.
-func Validate_Resources(
+func Validate_ResourceRequirements(
 	ctx context.Context, op operation.Operation, fldPath *field.Path,
-	obj, oldObj *ateapipb.Resources) (errs field.ErrorList) {
+	obj, oldObj *ateapipb.ResourceRequirements) (errs field.ErrorList) {
 
-	{ // field ateapipb.Resources.Limits
+	{ // field ateapipb.ResourceRequirements.Limits
 		fn := func(
 			fldPath *field.Path,
-			obj, oldObj []*ateapipb.Limits,
+			obj, oldObj *ateapipb.Resources,
 			oldValueCorrelated bool) (errs field.ErrorList) {
 			// don't revalidate unchanged data
 			if oldValueCorrelated && op.Type == operation.Update {
@@ -7078,37 +7226,95 @@ func Validate_Resources(
 			}
 			// call field-attached validations
 			earlyReturn := false
-			if e := validate.PtrSliceNoNils[ateapipb.Limits](ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
-				errs = append(errs, e...)
-				earlyReturn = true
-			}
-			if e := validate.MaxItems(ctx, op, fldPath, obj, oldObj, 2).MarkShortCircuit(); len(e) != 0 {
-				errs = append(errs, e...)
-				earlyReturn = true
-			}
-			if e := validate.OptionalSlice(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+			if e := validate.OptionalPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
 				earlyReturn = true
 			}
 			if earlyReturn {
 				return // do not proceed
 			}
-			// lists with map semantics require unique keys
-			if e := validate.PtrSliceUnique(ctx, op, fldPath, obj, oldObj,
-				func(a *ateapipb.Limits, b *ateapipb.Limits) bool { return a.Name == b.Name }); len(e) != 0 {
+			// call the type's validation function
+			errs = append(errs, Validate_Resources(ctx, op, fldPath, obj, oldObj)...)
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ResourceRequirements) *ateapipb.Resources {
+				return oldObj.Limits
+			})
+		errs = append(errs, fn(fldPath.Child("limits"), obj.Limits, oldVal, oldObj != nil)...)
+	}
+
+	return errs
+}
+
+// Validate_Resources validates an instance of Resources according
+// to declarative validation rules in the API schema.
+func Validate_Resources(
+	ctx context.Context, op operation.Operation, fldPath *field.Path,
+	obj, oldObj *ateapipb.Resources) (errs field.ErrorList) {
+
+	{ // field ateapipb.Resources.CpuMillicores
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *int64,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.OptionalValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			if e := validate.Maximum(ctx, op, fldPath, obj, oldObj, 999999); len(e) != 0 {
 				errs = append(errs, e...)
 			}
-			// iterate the list and call the type's validation function
-			if e := validate.EachPtrSliceVal(ctx, op, fldPath, obj, oldObj,
-				func(a *ateapipb.Limits, b *ateapipb.Limits) bool { return a.Name == b.Name }, ateDeepEqual, Validate_Limits); len(e) != 0 {
+			if e := validate.Minimum(ctx, op, fldPath, obj, oldObj, 0); len(e) != 0 {
 				errs = append(errs, e...)
 			}
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.Resources) []*ateapipb.Limits {
-				return oldObj.Limits
+			func(oldObj *ateapipb.Resources) *int64 {
+				return &oldObj.CpuMillicores
 			})
-		errs = append(errs, fn(fldPath.Child("limits"), obj.Limits, oldVal, oldObj != nil)...)
+		errs = append(errs, fn(fldPath.Child("cpu_millicores"), &obj.CpuMillicores, oldVal, oldObj != nil)...)
+	}
+
+	{ // field ateapipb.Resources.MemoryBytes
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *int64,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.OptionalValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			if e := validate.Minimum(ctx, op, fldPath, obj, oldObj, 0); len(e) != 0 {
+				errs = append(errs, e...)
+			}
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.Resources) *int64 {
+				return &oldObj.MemoryBytes
+			})
+		errs = append(errs, fn(fldPath.Child("memory_bytes"), &obj.MemoryBytes, oldVal, oldObj != nil)...)
 	}
 
 	return errs
@@ -7685,8 +7891,7 @@ func Validate_SnapshotConfig(
 			}
 			// call field-attached validations
 			earlyReturn := false
-			if e := validate.RequiredValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
-				errs = append(errs, e...)
+			if e := validate.OptionalValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
 				earlyReturn = true
 			}
 			if earlyReturn {
@@ -9223,7 +9428,7 @@ func Validate_VersionedSandboxCompat(
 	return errs
 }
 
-var unionMembershipFor_go_ate_dev_substrate_pkg_proto_ateapipb_Volume_ = validate.NewUnionMembership(validate.NewUnionMember("durable_dir"), validate.NewUnionMember("external_volume_template"), validate.NewUnionMember("system_info"), validate.NewUnionMember("image"))
+var unionMembershipFor_go_ate_dev_substrate_pkg_proto_ateapipb_Volume_ = validate.NewUnionMembership(validate.NewUnionMember("durable_dir"), validate.NewUnionMember("external"), validate.NewUnionMember("system_info"), validate.NewUnionMember("image"))
 
 // Validate_Volume validates an instance of Volume according
 // to declarative validation rules in the API schema.
@@ -9242,7 +9447,7 @@ func Validate_Volume(
 			if obj == nil {
 				return false
 			}
-			return obj.ExternalVolumeTemplate != nil
+			return obj.External != nil
 		},
 		func(obj *ateapipb.Volume) bool {
 			if obj == nil {
@@ -9319,10 +9524,10 @@ func Validate_Volume(
 		errs = append(errs, fn(fldPath.Child("durable_dir"), obj.DurableDir, oldVal, oldObj != nil)...)
 	}
 
-	{ // field ateapipb.Volume.ExternalVolumeTemplate
+	{ // field ateapipb.Volume.External
 		fn := func(
 			fldPath *field.Path,
-			obj, oldObj *ateapipb.ExternalVolumeTemplate,
+			obj, oldObj *ateapipb.ExternalVolumeSource,
 			oldValueCorrelated bool) (errs field.ErrorList) {
 			// don't revalidate unchanged data
 			if oldValueCorrelated && op.Type == operation.Update {
@@ -9346,14 +9551,14 @@ func Validate_Volume(
 				return // do not proceed
 			}
 			// call the type's validation function
-			errs = append(errs, Validate_ExternalVolumeTemplate(ctx, op, fldPath, obj, oldObj)...)
+			errs = append(errs, Validate_ExternalVolumeSource(ctx, op, fldPath, obj, oldObj)...)
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.Volume) *ateapipb.ExternalVolumeTemplate {
-				return oldObj.ExternalVolumeTemplate
+			func(oldObj *ateapipb.Volume) *ateapipb.ExternalVolumeSource {
+				return oldObj.External
 			})
-		errs = append(errs, fn(fldPath.Child("external_volume_template"), obj.ExternalVolumeTemplate, oldVal, oldObj != nil)...)
+		errs = append(errs, fn(fldPath.Child("external"), obj.External, oldVal, oldObj != nil)...)
 	}
 
 	{ // field ateapipb.Volume.SystemInfo
@@ -10399,34 +10604,69 @@ func Validate_WorkerResources(
 	ctx context.Context, op operation.Operation, fldPath *field.Path,
 	obj, oldObj *ateapipb.WorkerResources) (errs field.ErrorList) {
 
-	{ // field ateapipb.WorkerResources.Resources
+	{ // field ateapipb.WorkerResources.CpuMillicores
 		fn := func(
 			fldPath *field.Path,
-			obj, oldObj *ateapipb.Resources,
+			obj, oldObj *int64,
 			oldValueCorrelated bool) (errs field.ErrorList) {
 			// don't revalidate unchanged data
 			if oldValueCorrelated && op.Type == operation.Update {
-				if ateDeepEqual(obj, oldObj) {
+				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
 					return nil
 				}
 			}
 			// call field-attached validations
 			earlyReturn := false
-			if e := validate.OptionalPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+			if e := validate.OptionalValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
 				earlyReturn = true
 			}
 			if earlyReturn {
 				return // do not proceed
 			}
-			// call the type's validation function
-			errs = append(errs, Validate_Resources(ctx, op, fldPath, obj, oldObj)...)
+			if e := validate.Maximum(ctx, op, fldPath, obj, oldObj, 999999); len(e) != 0 {
+				errs = append(errs, e...)
+			}
+			if e := validate.Minimum(ctx, op, fldPath, obj, oldObj, 0); len(e) != 0 {
+				errs = append(errs, e...)
+			}
 			return
 		}
 		oldVal := safe.Field(oldObj,
-			func(oldObj *ateapipb.WorkerResources) *ateapipb.Resources {
-				return oldObj.Resources
+			func(oldObj *ateapipb.WorkerResources) *int64 {
+				return &oldObj.CpuMillicores
 			})
-		errs = append(errs, fn(fldPath.Child("resources"), obj.Resources, oldVal, oldObj != nil)...)
+		errs = append(errs, fn(fldPath.Child("cpu_millicores"), &obj.CpuMillicores, oldVal, oldObj != nil)...)
+	}
+
+	{ // field ateapipb.WorkerResources.MemoryBytes
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *int64,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.OptionalValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			if e := validate.Minimum(ctx, op, fldPath, obj, oldObj, 0); len(e) != 0 {
+				errs = append(errs, e...)
+			}
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.WorkerResources) *int64 {
+				return &oldObj.MemoryBytes
+			})
+		errs = append(errs, fn(fldPath.Child("memory_bytes"), &obj.MemoryBytes, oldVal, oldObj != nil)...)
 	}
 
 	{ // field ateapipb.WorkerResources.Actors

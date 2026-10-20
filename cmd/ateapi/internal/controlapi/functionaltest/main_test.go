@@ -125,6 +125,8 @@ type FakeAteletServer struct {
 	CheckpointCalled  bool
 	CheckpointRequest *ateletpb.CheckpointRequest
 	FailCheckpoint    error
+	// checkpointed is each actor's last checkpointed snapshot, by UID.
+	checkpointed map[string]*ateletpb.Snapshot
 
 	RestoreCalled  bool
 	RestoreRequest *ateletpb.RestoreRequest
@@ -134,6 +136,10 @@ type FakeAteletServer struct {
 	PromoteCalled  bool
 	PromoteRequest *ateletpb.PromoteSnapshotRequest
 	FailPromote    error
+
+	DetachCalled  bool
+	DetachRequest *ateletpb.DetachActorRequest
+	FailDetach    error
 
 	TerminateCalled  bool
 	TerminateRequest *ateletpb.TerminateRequest
@@ -177,6 +183,7 @@ func (f *FakeAteletServer) Reset() {
 	f.CheckpointCalled = false
 	f.CheckpointRequest = nil
 	f.FailCheckpoint = nil
+	f.checkpointed = nil
 
 	f.RestoreCalled = false
 	f.RestoreRequest = nil
@@ -186,6 +193,10 @@ func (f *FakeAteletServer) Reset() {
 	f.PromoteCalled = false
 	f.PromoteRequest = nil
 	f.FailPromote = nil
+
+	f.DetachCalled = false
+	f.DetachRequest = nil
+	f.FailDetach = nil
 
 	f.TerminateCalled = false
 	f.TerminateRequest = nil
@@ -206,7 +217,35 @@ func (f *FakeAteletServer) PromoteSnapshot(ctx context.Context, req *ateletpb.Pr
 	if err := f.writeSnapshot(req.GetSnapshot().GetObject().GetSnapshotUri()); err != nil {
 		return nil, err
 	}
-	return &ateletpb.PromoteSnapshotResponse{}, nil
+	// Like atelet, report the snapshot durable and still kept on the node.
+	report := &ateletpb.SnapshotReport{Snapshot: proto.CloneOf(req.GetSnapshot())}
+	return &ateletpb.PromoteSnapshotResponse{State: &ateletpb.ActorSnapshotState{
+		LatestLocal:   report,
+		LatestDurable: proto.CloneOf(report),
+	}}, nil
+}
+
+// DetachActor uploads the actor's last checkpointed snapshot and reports it
+// durable, with nothing left on the node.
+func (f *FakeAteletServer) DetachActor(ctx context.Context, req *ateletpb.DetachActorRequest) (*ateletpb.DetachActorResponse, error) {
+	f.Lock.Lock()
+	defer f.Lock.Unlock()
+
+	f.DetachCalled = true
+	f.DetachRequest = proto.CloneOf(req)
+	if f.FailDetach != nil {
+		return nil, f.FailDetach
+	}
+	snap := f.checkpointed[req.GetActorUid()]
+	if snap == nil {
+		return &ateletpb.DetachActorResponse{State: &ateletpb.ActorSnapshotState{}}, nil
+	}
+	if err := f.writeSnapshot(snap.GetObject().GetSnapshotUri()); err != nil {
+		return nil, err
+	}
+	return &ateletpb.DetachActorResponse{State: &ateletpb.ActorSnapshotState{
+		LatestDurable: &ateletpb.SnapshotReport{Snapshot: proto.CloneOf(snap)},
+	}}, nil
 }
 
 func (f *FakeAteletServer) Run(ctx context.Context, req *ateletpb.RunRequest) (*ateletpb.RunResponse, error) {
@@ -231,6 +270,10 @@ func (f *FakeAteletServer) Checkpoint(ctx context.Context, req *ateletpb.Checkpo
 	if f.FailCheckpoint != nil {
 		return nil, f.FailCheckpoint
 	}
+	if f.checkpointed == nil {
+		f.checkpointed = map[string]*ateletpb.Snapshot{}
+	}
+	f.checkpointed[req.GetActorUid()] = proto.CloneOf(req.GetSnapshot())
 
 	// Only an immediate upload is in object storage when Checkpoint returns;
 	// atelet does not upload deferred snapshots yet.

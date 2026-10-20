@@ -24,8 +24,9 @@ import (
 )
 
 // Background work settings. All but the Default ones, which atelet's
-// --snapshot-upload-delay, --snapshot-detach-delay, --snapshot-upload-workers,
-// and --snapshot-detach-workers override, are fixed until they become flags or
+// --snapshot-upload-delay, --snapshot-detach-delay, --snapshot-upload-timeout,
+// --snapshot-upload-est-throughput-mib, --snapshot-upload-workers, and
+// --snapshot-detach-workers override, are fixed until they become flags or
 // per-request settings on UploadConfig.
 const (
 	// DefaultUploadDelay is how long by default after the oldest
@@ -35,6 +36,22 @@ const (
 	// DefaultDetachDelay is how long an actor stays suspended on this node by
 	// default, its latest snapshot kept locally, before atelet detaches it.
 	DefaultDetachDelay = 30 * time.Minute
+	// DefaultUploadTimeout is how long one background upload attempt,
+	// including the one a background detach runs first, may run by default,
+	// on top of the time its snapshot takes at the estimated upload
+	// throughput, before atelet cancels it. It keeps a wedged object-store
+	// call from holding a background worker forever.
+	DefaultUploadTimeout = 2 * time.Minute
+	// DefaultUploadEstThroughput, in bytes per second of a snapshot's
+	// allocated local size, is how fast atelet expects a background upload to
+	// run by default. Each attempt's timeout allows for the snapshot to upload
+	// at this rate, so a large snapshot is not cut off.
+	DefaultUploadEstThroughput = 100 << 20
+	// maxUploadTimeoutDoublings caps how many times consecutive failures of
+	// an actor's background work double its next upload attempt's timeout:
+	// at most 8 times the first attempt's, so an upload slower than the
+	// estimated throughput still finishes.
+	maxUploadTimeoutDoublings = 3
 	// snapshotRetryDelay is how long atelet holds an actor's background work
 	// back after a failure. Each further consecutive failure doubles it, up to
 	// maxSnapshotRetryDelay.
@@ -221,7 +238,7 @@ func (t *Tracker) beginDueWork(actorUID string, kind opKind) func() {
 	switch kind {
 	case opDetach:
 		if due, ok := t.detachDueLocked(a); ok && !due.After(now) {
-			if a.holds > 0 {
+			if a.hold != holdNone {
 				// A Run, Restore, Checkpoint, or PromoteSnapshot of the actor
 				// is in progress, and queues the actor again when it ends
 				// (see holdLocked).
@@ -234,7 +251,7 @@ func (t *Tracker) beginDueWork(actorUID string, kind opKind) func() {
 		}
 	case opUpload:
 		if due, ok := t.uploadDueLocked(a); ok && !due.After(now) {
-			if a.promotes > 0 {
+			if a.hold == holdPromote {
 				// A PromoteSnapshot of the actor is in progress, and queues
 				// the actor again when it ends (see holdLocked).
 				return nil
@@ -287,7 +304,7 @@ func (t *Tracker) requeueLocked(a *actorSnapshots) {
 	if due, ok := t.detachDueLocked(a); ok {
 		t.queues[opDetach].AddAfter(a.actorUID, due.Sub(now))
 	}
-	if !supersededUploading && a.op == nil && a.holds == 0 && a.retryAt.IsZero() && !a.uploadingFailed && !a.unsaved {
+	if !supersededUploading && a.op == nil && a.hold == holdNone && a.retryAt.IsZero() && !a.uploadingFailed && !a.unsaved {
 		t.dropLocked(a.actorUID)
 	}
 }
@@ -386,16 +403,10 @@ func (t *Tracker) endOp(actorUID string, op *actorOp, opErr error) (*ateletpb.Ac
 // operation in progress (whether started by a background worker or an atelet
 // RPC), and returns the actor's entry, which may be nil. It releases the
 // actor's lock while it waits, so the actor can change meanwhile, and holds
-// it again when it returns. check, if not nil, vets the entry on every pass:
-// an error from it is returned at once, without waiting further.
-func (t *Tracker) waitIdleLocked(ctx context.Context, actorUID string, check func(*actorSnapshots) error) (*actorSnapshots, error) {
+// it again when it returns.
+func (t *Tracker) waitIdleLocked(ctx context.Context, actorUID string) (*actorSnapshots, error) {
 	for {
 		a := t.findLocked(actorUID)
-		if a != nil && check != nil {
-			if err := check(a); err != nil {
-				return nil, err
-			}
-		}
 		if a == nil || a.op == nil {
 			return a, nil
 		}

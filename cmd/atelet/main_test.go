@@ -40,6 +40,7 @@ import (
 	"go.ate.dev/substrate/cmd/atelet/internal/snapshottracker"
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/ateattr"
+	"go.ate.dev/substrate/internal/ateinterceptors"
 	"go.ate.dev/substrate/internal/atelet"
 	"go.ate.dev/substrate/internal/imagecache"
 	"go.ate.dev/substrate/internal/ocispec"
@@ -52,6 +53,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -80,36 +82,70 @@ func TestPortFlagDefault(t *testing.T) {
 	}
 }
 
-// The snapshot delay flags must be positive, and the upload delay must not
-// exceed the detach delay, which the defaults satisfy too.
+// The snapshot delay flags must be positive, the upload timeout must not be
+// negative (0 turns it off), and the upload delay must not exceed the detach
+// delay, which the defaults satisfy too.
 func TestValidateSnapshotDelayFlags(t *testing.T) {
-	setFlags := func(upload, detach, giveUp time.Duration) {
-		*snapshotUploadDelay, *snapshotDetachDelay, *snapshotReportGiveUpAfter = upload, detach, giveUp
+	setFlags := func(upload, detach, timeout, giveUp time.Duration) {
+		*snapshotUploadDelay, *snapshotDetachDelay, *snapshotUploadTimeout, *snapshotReportGiveUpAfter = upload, detach, timeout, giveUp
 	}
 	t.Cleanup(func() {
-		setFlags(snapshottracker.DefaultUploadDelay, snapshottracker.DefaultDetachDelay, snapshottracker.DefaultReportGiveUpAfter)
+		setFlags(snapshottracker.DefaultUploadDelay, snapshottracker.DefaultDetachDelay, snapshottracker.DefaultUploadTimeout, snapshottracker.DefaultReportGiveUpAfter)
 	})
 
 	for _, tc := range []struct {
-		name                   string
-		upload, detach, giveUp time.Duration
-		wantErr                bool
+		name                            string
+		upload, detach, timeout, giveUp time.Duration
+		wantErr                         bool
 	}{
-		{"defaults", snapshottracker.DefaultUploadDelay, snapshottracker.DefaultDetachDelay, snapshottracker.DefaultReportGiveUpAfter, false},
-		{"upload sooner than detach", time.Minute, time.Hour, time.Minute, false},
-		{"upload as late as detach", time.Hour, time.Hour, time.Minute, false},
-		{"upload later than detach", time.Hour, time.Minute, time.Minute, true},
-		{"zero upload delay", 0, time.Hour, time.Minute, true},
-		{"negative detach delay", time.Minute, -time.Minute, time.Minute, true},
-		{"zero report give-up delay", time.Minute, time.Hour, 0, true},
-		{"negative report give-up delay", time.Minute, time.Hour, -time.Minute, true},
+		{"defaults", snapshottracker.DefaultUploadDelay, snapshottracker.DefaultDetachDelay, snapshottracker.DefaultUploadTimeout, snapshottracker.DefaultReportGiveUpAfter, false},
+		{"upload sooner than detach", time.Minute, time.Hour, 5 * time.Minute, time.Minute, false},
+		{"upload as late as detach", time.Hour, time.Hour, 5 * time.Minute, time.Minute, false},
+		{"upload later than detach", time.Hour, time.Minute, 5 * time.Minute, time.Minute, true},
+		{"zero upload delay", 0, time.Hour, 5 * time.Minute, time.Minute, true},
+		{"negative detach delay", time.Minute, -time.Minute, 5 * time.Minute, time.Minute, true},
+		{"zero upload timeout", time.Minute, time.Hour, 0, time.Minute, false},
+		{"negative upload timeout", time.Minute, time.Hour, -time.Minute, time.Minute, true},
+		{"zero report give-up delay", time.Minute, time.Hour, 5 * time.Minute, 0, true},
+		{"negative report give-up delay", time.Minute, time.Hour, 5 * time.Minute, -time.Minute, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			setFlags(tc.upload, tc.detach, tc.giveUp)
+			setFlags(tc.upload, tc.detach, tc.timeout, tc.giveUp)
 			if err := validateSnapshotDelayFlags(); (err != nil) != tc.wantErr {
-				t.Errorf("upload=%v detach=%v giveUp=%v: err = %v, wantErr %v", tc.upload, tc.detach, tc.giveUp, err, tc.wantErr)
+				t.Errorf("upload=%v detach=%v timeout=%v giveUp=%v: err = %v, wantErr %v", tc.upload, tc.detach, tc.timeout, tc.giveUp, err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// --snapshot-upload-est-throughput-mib must be between 0, which adds no time
+// for a snapshot's size, and maxSnapshotUploadEstMiBps, so its rate in bytes
+// cannot overflow, and defaults to the tracker's default throughput in MiB/s.
+func TestValidateSnapshotUploadEstThroughput(t *testing.T) {
+	t.Cleanup(func() { *snapshotUploadEstMiBps = snapshottracker.DefaultUploadEstThroughput >> 20 })
+	for _, tc := range []struct {
+		mibps   int
+		wantErr bool
+	}{
+		{snapshottracker.DefaultUploadEstThroughput >> 20, false},
+		{1, false},
+		{0, false},
+		{maxSnapshotUploadEstMiBps, false},
+		{maxSnapshotUploadEstMiBps + 1, true},
+		{-1, true},
+	} {
+		*snapshotUploadEstMiBps = tc.mibps
+		if err := validateSnapshotDelayFlags(); (err != nil) != tc.wantErr {
+			t.Errorf("--snapshot-upload-est-throughput-mib=%d: err = %v, wantErr %v", tc.mibps, err, tc.wantErr)
+		}
+	}
+
+	f := pflag.Lookup("snapshot-upload-est-throughput-mib")
+	if f == nil {
+		t.Fatal("no --snapshot-upload-est-throughput-mib flag registered")
+	}
+	if want := "100"; f.DefValue != want {
+		t.Errorf("--snapshot-upload-est-throughput-mib default = %q, want %q", f.DefValue, want)
 	}
 }
 
@@ -372,7 +408,7 @@ func TestPrepareOCIBundlesFillsContainerSpec(t *testing.T) {
 			SecurityContext: &ateletpb.SecurityContext{
 				Capabilities: &ateletpb.Capabilities{Add: []string{"NET_ADMIN"}, Drop: []string{"KILL"}},
 			},
-			Resources: &ateletpb.ResourceLimits{MemoryBytes: 1 << 30, CpuMillis: 500},
+			Resources: &ateletpb.ResourceRequirements{Limits: &ateletpb.Resources{MemoryBytes: 1 << 30, CpuMillicores: 500}},
 		}},
 	}
 
@@ -385,7 +421,7 @@ func TestPrepareOCIBundlesFillsContainerSpec(t *testing.T) {
 		Args:         []string{"/bin/app", "serve"},
 		Env:          []string{"GREETING=hello", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 		Capabilities: []string{"CAP_AUDIT_WRITE", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
-		Resources:    &ateworkerpb.ResourceLimits{MemoryBytes: 1 << 30, CpuMillis: 500},
+		Resources:    &ateworkerpb.ResourceRequirements{Limits: &ateworkerpb.Resources{MemoryBytes: 1 << 30, CpuMillicores: 500}},
 	}}
 	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
 		t.Errorf("prepareOCIBundles container specs mismatch (-want +got):\n%s", diff)
@@ -1305,6 +1341,7 @@ type recordingObjectStorage struct {
 	mu      sync.Mutex
 	objects map[string][]byte
 	putErr  error
+	onPut   func()
 }
 
 func (r *recordingObjectStorage) GetObject(_ context.Context, bucket, object string) (io.ReadCloser, error) {
@@ -1318,6 +1355,9 @@ func (r *recordingObjectStorage) GetObject(_ context.Context, bucket, object str
 }
 
 func (r *recordingObjectStorage) PutObject(_ context.Context, bucket, object string, reader io.Reader) error {
+	if r.onPut != nil {
+		r.onPut()
+	}
 	if r.putErr != nil {
 		return r.putErr
 	}
@@ -1563,12 +1603,15 @@ func TestUploadLocalCheckpointDir(t *testing.T) {
 		}
 	})
 
-	t.Run("gone locally and remotely crashes the actor", func(t *testing.T) {
+	t.Run("gone locally and remotely is NotFound", func(t *testing.T) {
 		s := newPluginHerder(t, &recordingObjectStorage{})
 
 		_, _, err := s.uploadLocalCheckpointDir(ctx, validPromoteSnapshotRequest(), filepath.Join(t.TempDir(), "never-created"), uri)
-		if err == nil {
-			t.Fatal("uploadLocalCheckpointDir succeeded, want error")
+		// atelet's server interceptor decides the code ate-api-server sees.
+		_, wireErr := ateinterceptors.InternalServerUnaryInterceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/test"},
+			func(context.Context, any) (any, error) { return nil, err })
+		if got := status.Code(wireErr); got != codes.NotFound {
+			t.Fatalf("code = %v (err %v), want NotFound", got, wireErr)
 		}
 		if !strings.Contains(err.Error(), "gone and no uploaded copy exists") {
 			t.Errorf("error = %v, want it to name the unrecoverable local snapshot", err)
