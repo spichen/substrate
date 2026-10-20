@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"go.ate.dev/substrate/cmd/ateapi/internal/scheduling"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
@@ -116,10 +117,12 @@ type ActorWorkflow struct {
 	instruments          *Instruments
 	egressGatewayAddress string
 	pluginRegistry       VolumePluginRegistry
+	workflowDeadline     time.Duration
 	objectStorePlugin    objectstorev1.ControlProviderClient
 }
 
-// NewActorWorkflow creates a new ActorWorkflow. instruments may be nil.
+// NewActorWorkflow creates a new ActorWorkflow. workflowDeadline bounds
+// each Resume/Suspend workflow end-to-end; instruments may be nil.
 //
 // objectStorePlugin may be nil, which leaves external snapshots in place instead
 // of copying and releasing them. Only tests that never reach those steps pass
@@ -134,6 +137,7 @@ func NewActorWorkflow(
 	instruments *Instruments,
 	egressGatewayAddress string,
 	pluginRegistry VolumePluginRegistry,
+	workflowDeadline time.Duration,
 	objectStorePlugin objectstorev1.ControlProviderClient,
 	sharedVolumes sharedVolumeDeleter,
 ) *ActorWorkflow {
@@ -149,6 +153,7 @@ func NewActorWorkflow(
 		instruments:          instruments,
 		egressGatewayAddress: egressGatewayAddress,
 		pluginRegistry:       pluginRegistry,
+		workflowDeadline:     workflowDeadline,
 		objectStorePlugin:    objectStorePlugin,
 	}
 }
@@ -247,7 +252,14 @@ func actorLeaseKey(actorRef resources.ActorRef) string {
 }
 
 func (w *ActorWorkflow) acquireActorLease(ctx context.Context, actorRef resources.ActorRef) (context.Context, *store.Lease, error) {
-	return acquireLease(ctx, w.store, actorLeaseKey(actorRef), "actor")
+	workflowCtx, cancel := context.WithTimeout(ctx, w.workflowDeadline)
+	leaseCtx, lease, err := acquireLease(workflowCtx, w.store, actorLeaseKey(actorRef), "actor")
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	context.AfterFunc(lease.Context(), cancel)
+	return leaseCtx, lease, nil
 }
 
 func acquireTagLease(ctx context.Context, holder leaseHolder, tagRef resources.TagRef) (context.Context, *store.Lease, error) {

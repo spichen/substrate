@@ -1216,7 +1216,7 @@ func newWireCaptureWorkflow(t *testing.T, persistence store.Interface) (*ActorWo
 
 	pools := workerPoolListerFor(t, []*atev1alpha1.WorkerPool{resolvedWorkerPool("worker-ns", "pool", "gvisor")})
 
-	return &ActorWorkflow{store: persistence, dialer: dialer, workerPoolLister: pools, sandboxConfigLister: lister}, fake
+	return &ActorWorkflow{store: persistence, dialer: dialer, workerPoolLister: pools, sandboxConfigLister: lister, workflowDeadline: time.Minute}, fake
 }
 
 // TestResumeActor_AteletWireRequest is the characteristic test for the

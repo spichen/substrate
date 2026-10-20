@@ -141,7 +141,7 @@ bundle did the validating.
   the most likely cause is that your actor is not configured to trust the MITM
   CA correctly.
 * This CA configuration does not help the actor authenticate to the destination.
-  For that, refer to our documentation on egress credential injection. 
+  For that, refer to our documentation on egress credential injection.
 
 ## See also
 

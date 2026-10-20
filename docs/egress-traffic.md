@@ -22,7 +22,7 @@ cannot reach the collector until the actor has an `http` egress rule for it. See
 | :---- | :---- | :---- | :---- | :---- |
 | any | HTTP(S) 1.1 / 2 | Supported with policy controls | atunnel -> egress gateway -> origin | `403 Forbidden` |
 | any | WebSocket | Blocked | n/a | `403 Forbidden` |
-| any | Standard HTTP(S) CONNECT (forward-proxy tunnel) | Blocked | n/a | `403 Forbidden` |
+| any | Standard HTTP(S) CONNECT (forward-proxy tunnel) | Blocked | n/a | `403 Forbidden` (Envoy), `405 Method Not Allowed` (agentgateway) |
 | 53 | DNS to the sandbox's gateway | Allowed for hostnames matching the actor's egress policy | sandbox DNS relay -> worker pod's resolvers | `NXDOMAIN` |
 | any | Any other TCP | Blocked | n/a | The connection is accepted and then closed with no bytes returned. There is no status code. atunnel logs the failure. |
 

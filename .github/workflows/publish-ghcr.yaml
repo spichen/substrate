@@ -1,5 +1,5 @@
 # Publish images and Helm charts for the shared-volume fork.
-# Images: ghcr.io/spichen/substrate/<component>:v0.0.0-20261018133208-7542bb219761
+# Images: ghcr.io/spichen/substrate/<component>:v0.0.0-20261020181632-e989fa1a31e8
 # Charts: oci://ghcr.io/spichen/substrate/helm
 name: publish-ghcr
 
@@ -43,7 +43,7 @@ jobs:
       - name: Build and push images
         env:
           IMAGE_REPOSITORY: ghcr.io/spichen/substrate
-          IMAGE_TAG: v0.0.0-20261018133208-7542bb219761
+          IMAGE_TAG: v0.0.0-20261020181632-e989fa1a31e8
         run: |
           set -o errexit -o nounset -o pipefail
           for component in ateapi ate-idp-server atecontroller atelet ateworker-gvisor ateworker-microvm podcertcontroller atenet objectstore-plugin credential-provider/kubernetes-secrets; do
@@ -62,8 +62,8 @@ jobs:
       - name: Package and push Helm charts
         env:
           HELM_EXPERIMENTAL_OCI: "1"
-          CHART_VERSION: 0.0.0-20261018133208-7542bb219761
-          APP_VERSION: v0.0.0-20261018133208-7542bb219761
+          CHART_VERSION: 0.0.0-20261020181632-e989fa1a31e8
+          APP_VERSION: v0.0.0-20261020181632-e989fa1a31e8
           CHART_REPOSITORY: oci://ghcr.io/spichen/substrate/helm
         run: |
           set -o errexit -o nounset -o pipefail

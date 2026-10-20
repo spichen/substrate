@@ -98,6 +98,7 @@ var (
 	clientCACerts        = pflag.String("client-ca-certs", "/run/podidentity.podcert.ate.dev/trust-bundle.pem", "CA bundle used to verify gRPC client certificates.")
 	ateapiAddress        = pflag.String("ateapi-address", "k8s:///api.ate-system.svc:443", "ateapi gRPC target used by the credential broker.")
 	ateapiCAFile         = pflag.String("ateapi-ca-file", "/run/servicedns.podcert.ate.dev/trust-bundle.pem", "CA bundle used to verify ateapi.")
+	grpcInsecure         = pflag.Bool("grpc-insecure", false, "Serve gRPC without transport security. Intended only for local clusters without Pod Certificates.")
 	ateapiServerName     = pflag.String("ateapi-server-name", "api.ate-system.svc", "DNS name expected on the ateapi certificate.")
 
 	// The kubelet already knows how to authenticate to its node's cloud
@@ -334,24 +335,28 @@ func main() {
 		serverboot.Fatal(ctx, "Object-store plugin is not serving", err)
 	}
 
-	dialOpts, err := ateapiauth.DialOptions(ateapiauth.ClientConfig{
-		K8sClient:        k8sClient,
-		CAFile:           *ateapiCAFile,
-		ServerName:       *ateapiServerName,
-		ClientCredBundle: *grpcServerCredBundle,
-	})
-	if err != nil {
-		serverboot.Fatal(ctx, "Failed to build ateapi client credentials", err)
+	var ateapiConn *grpc.ClientConn
+	var reporter snapshottracker.Reporter
+	if !*grpcInsecure {
+		dialOpts, err := ateapiauth.DialOptions(ateapiauth.ClientConfig{
+			K8sClient:        k8sClient,
+			CAFile:           *ateapiCAFile,
+			ServerName:       *ateapiServerName,
+			ClientCredBundle: *grpcServerCredBundle,
+		})
+		if err != nil {
+			serverboot.Fatal(ctx, "Failed to build ateapi client credentials", err)
+		}
+		// atelet acts for the system, not a user, so it always opts in to the
+		// preview features the server enables.
+		dialOpts = append(dialOpts, preview.DialOptionsWithOptIn()...)
+		ateapiConn, err = grpc.NewClient(*ateapiAddress, dialOpts...)
+		if err != nil {
+			serverboot.Fatal(ctx, "Failed to create ateapi client", err)
+		}
+		defer ateapiConn.Close()
+		reporter = &trackerReporter{workers: ateapipb.NewWorkerServiceClient(ateapiConn)}
 	}
-	// atelet acts for the system, not a user, so it always opts in to the
-	// preview features the server enables.
-	dialOpts = append(dialOpts, preview.DialOptionsWithOptIn()...)
-	ateapiConn, err := grpc.NewClient(*ateapiAddress, dialOpts...)
-	if err != nil {
-		serverboot.Fatal(ctx, "Failed to create ateapi client", err)
-	}
-	defer ateapiConn.Close()
-	workerService := ateapipb.NewWorkerServiceClient(ateapiConn)
 
 	// The snapshot tracker's workers get a context of their own, cancelled only
 	// once the gRPC server has drained, so background snapshot work keeps
@@ -364,7 +369,7 @@ func main() {
 		snapshottracker.WithUploadWorkers(*snapshotUploadWorkers),
 		snapshottracker.WithDetachWorkers(*snapshotDetachWorkers),
 		snapshottracker.WithInstruments(trackerInstruments),
-		snapshottracker.WithReporter(&trackerReporter{workers: workerService}),
+		snapshottracker.WithReporter(reporter),
 		snapshottracker.WithReportWorkers(*snapshotReportWorkers),
 		snapshottracker.WithReportGiveUpAfter(*snapshotReportGiveUpAfter))
 	// The runtimes this node's workers advertise, read by Run and Restore.
@@ -395,20 +400,58 @@ func main() {
 	snapshots.Start()
 	go systemInfoVolumes.run(ctx)
 
-	tlsCfg, err := ateletServerTLSConfig(*grpcServerCredBundle, *clientCACerts)
-	if err != nil {
-		serverboot.Fatal(ctx, "Failed to build server TLS config", err)
+	serverOpts := ateletServerOptions(insecure.NewCredentials())
+	nodeName := os.Getenv("NODE_NAME")
+	if *grpcInsecure {
+		slog.WarnContext(ctx, "Serving atelet gRPC without transport security")
+	} else {
+		tlsCfg, err := ateletServerTLSConfig(*grpcServerCredBundle, *clientCACerts)
+		if err != nil {
+			serverboot.Fatal(ctx, "Failed to build server TLS config", err)
+		}
+		ateletCert, err := credbundle.Parse(*grpcServerCredBundle)
+		if err != nil {
+			serverboot.Fatal(ctx, "Failed to load atelet Pod identity", err)
+		}
+		ateletIdentity, err := substratex509.PodIdentityFromCertificate(ateletCert.Leaf)
+		if err != nil {
+			serverboot.Fatal(ctx, "Failed to load atelet Pod identity", err)
+		}
+		if ateletIdentity == nil {
+			serverboot.Fatal(ctx, "Failed to load atelet Pod identity", fmt.Errorf("credential bundle has no Pod identity"))
+		}
+
+		nodeName = ateletIdentity.NodeName
+		serverOpts = ateletServerOptions(credentials.NewTLS(tlsCfg))
+
+		workerFacingTLS := tlsCfg.Clone()
+		workerFacingTLS.VerifyConnection = verifyClientOnSameNode(ateletIdentity)
+		if err := os.Remove(nodepath.WorkerSupportSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
+			serverboot.Fatal(ctx, "Failed to remove stale credential broker socket", err)
+		}
+		workerFacingLis, err := net.Listen("unix", nodepath.WorkerSupportSocket)
+		if err != nil {
+			serverboot.Fatal(ctx, "Failed to listen for credential broker", err)
+		}
+		defer workerFacingLis.Close()
+		if err := os.Chmod(nodepath.WorkerSupportSocket, 0o600); err != nil {
+			serverboot.Fatal(ctx, "Failed to restrict credential broker socket", err)
+		}
+
+		workerFacingSrv := grpc.NewServer(grpc.Creds(credentials.NewTLS(workerFacingTLS)))
+
+		ateletpb.RegisterWorkerSupportServer(workerFacingSrv, &workerSupportServer{
+			workers: ateapipb.NewWorkerServiceClient(ateapiConn),
+			control: ateapipb.NewControlClient(ateapiConn),
+		})
+		go func() {
+			if err := workerFacingSrv.Serve(workerFacingLis); err != nil {
+				serverboot.Fatal(ctx, "Failed to serve credential broker", err)
+			}
+		}()
 	}
-	ateletCert, err := credbundle.Parse(*grpcServerCredBundle)
-	if err != nil {
-		serverboot.Fatal(ctx, "Failed to load atelet Pod identity", err)
-	}
-	ateletIdentity, err := substratex509.PodIdentityFromCertificate(ateletCert.Leaf)
-	if err != nil {
-		serverboot.Fatal(ctx, "Failed to load atelet Pod identity", err)
-	}
-	if ateletIdentity == nil {
-		serverboot.Fatal(ctx, "Failed to load atelet Pod identity", fmt.Errorf("credential bundle has no Pod identity"))
+	if nodeName == "" {
+		serverboot.Fatal(ctx, "Failed to determine local node", fmt.Errorf("NODE_NAME must be set when --grpc-insecure is enabled"))
 	}
 
 	// SandboxConfigs and WorkerPools feed the workerSandboxSyncer: the pools
@@ -427,7 +470,7 @@ func main() {
 	// the pods on this node, not the whole cluster.
 	workerPodFactory := kubeinformers.NewSharedInformerFactoryWithOptions(k8sClient, 0,
 		kubeinformers.WithTweakListOptions(func(o *metav1.ListOptions) {
-			o.FieldSelector = "spec.nodeName=" + ateletIdentity.NodeName
+			o.FieldSelector = "spec.nodeName=" + nodeName
 			o.LabelSelector = workerPoolLabel
 		}))
 	// Pre-download each local worker's default runtime, as the syncer plans
@@ -454,32 +497,6 @@ func main() {
 	ateFactory.Start(stopCh)
 	workerPodFactory.Start(stopCh)
 
-	workerFacingTLS := tlsCfg.Clone()
-	workerFacingTLS.VerifyConnection = verifyClientOnSameNode(ateletIdentity)
-	if err := os.Remove(nodepath.WorkerSupportSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
-		serverboot.Fatal(ctx, "Failed to remove stale credential broker socket", err)
-	}
-	workerFacingLis, err := net.Listen("unix", nodepath.WorkerSupportSocket)
-	if err != nil {
-		serverboot.Fatal(ctx, "Failed to listen for credential broker", err)
-	}
-	defer workerFacingLis.Close()
-	if err := os.Chmod(nodepath.WorkerSupportSocket, 0o600); err != nil {
-		serverboot.Fatal(ctx, "Failed to restrict credential broker socket", err)
-	}
-
-	workerFacingSrv := grpc.NewServer(grpc.Creds(credentials.NewTLS(workerFacingTLS)))
-
-	ateletpb.RegisterWorkerSupportServer(workerFacingSrv, &workerSupportServer{
-		workers: workerService,
-		control: ateapipb.NewControlClient(ateapiConn),
-	})
-	go func() {
-		if err := workerFacingSrv.Serve(workerFacingLis); err != nil {
-			serverboot.Fatal(ctx, "Failed to serve credential broker", err)
-		}
-	}()
-
 	// Workers already registered with the control plane may be sent actors
 	// the moment atelet is reachable; the runtime index loaded above is what
 	// makes that safe after a restart.
@@ -488,7 +505,7 @@ func main() {
 		serverboot.Fatal(ctx, "Failed to listen", err)
 	}
 	close(serving)
-	svr := grpc.NewServer(ateletServerOptions(credentials.NewTLS(tlsCfg))...)
+	svr := grpc.NewServer(serverOpts...)
 	ateletpb.RegisterAteletServer(svr, wmService)
 	reflection.Register(svr)
 	slog.InfoContext(ctx, "WorkersManagerService listening", slog.Any("address", lis.Addr()))

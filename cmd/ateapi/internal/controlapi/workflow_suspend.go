@@ -373,10 +373,13 @@ func (w *ActorWorkflow) ensureSuspendedFinalized(ctx context.Context, actorRef r
 	// 1. Free the worker (if it hasn't been freed yet)
 	if latestActor.GetStatus().GetWorkerAssignment() != nil {
 		t = time.Now()
-		_, _, err := releaseWorker(ctx, w.store, latestActor)
+		_, released, err := releaseWorker(ctx, w.store, latestActor)
 		dReleaseWorker = time.Since(t)
 		if err != nil {
 			return nil, err
+		}
+		if w.workerCache != nil && released != nil {
+			w.workerCache.Observe(released)
 		}
 	}
 

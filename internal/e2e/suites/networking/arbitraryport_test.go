@@ -127,24 +127,28 @@ func TestActorArbitraryPortAccess(t *testing.T) {
 	})
 
 	t.Run("duplicate actor header rejected on CONNECT", func(t *testing.T) {
-		headers := http.Header{
-			atenet.TargetActorHeader: []string{actorRef.String(), "untrusted/actor"},
-		}
-		conn, err := router.ConnectWithHeaders(ctx, actorRef, counterExtraPort, headers)
-		if err != nil {
-			// A rejected CONNECT handshake is a valid rejection.
-			t.Logf("CONNECT with duplicate headers rejected: %v", err)
-			return
-		}
-		defer conn.Close()
+		for _, secondActor := range []string{actorRef.String(), "untrusted/actor"} {
+			t.Run(secondActor, func(t *testing.T) {
+				headers := http.Header{
+					atenet.TargetActorHeader: []string{actorRef.String(), secondActor},
+				}
+				conn, err := router.ConnectWithHeaders(ctx, actorRef, counterExtraPort, headers)
+				if err != nil {
+					// A rejected CONNECT handshake is a valid rejection.
+					t.Logf("CONNECT with duplicate headers rejected: %v", err)
+					return
+				}
+				defer conn.Close()
 
-		resp, body, err := requestTunneled(conn, actorRef.Name)
-		if err != nil {
-			t.Logf("tunneled request with duplicate CONNECT headers correctly failed: %v", err)
-			return
-		}
-		if resp.StatusCode != http.StatusNotFound {
-			t.Fatalf("request through CONNECT with duplicate actor headers returned %d, want 404; body: %s", resp.StatusCode, body)
+				resp, body, err := requestTunneled(conn, actorRef.Name)
+				if err != nil {
+					t.Logf("tunneled request with duplicate CONNECT headers correctly failed: %v", err)
+					return
+				}
+				if resp.StatusCode != http.StatusNotFound {
+					t.Fatalf("request through CONNECT with duplicate actor headers returned %d, want 404; body: %s", resp.StatusCode, body)
+				}
+			})
 		}
 	})
 }
