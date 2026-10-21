@@ -1,0 +1,108 @@
+# Publish images and Helm charts for the shared-volume fork.
+# Images: ghcr.io/spichen/substrate/<component>:v0.4.1-0.20261021171435-ebcb2e3eaafe
+# Charts: oci://ghcr.io/spichen/substrate/helm
+name: publish-ghcr
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-ghcr
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push images
+        env:
+          IMAGE_REPOSITORY: ghcr.io/spichen/substrate
+          IMAGE_TAG: v0.4.1-0.20261021171435-ebcb2e3eaafe
+        run: |
+          set -o errexit -o nounset -o pipefail
+          for component in ateapi ate-idp-server atecontroller atelet ateworker-gvisor ateworker-microvm podcertcontroller atenet objectstore-plugin credential-provider/kubernetes-secrets; do
+            echo "building ${component}"
+            KO_DOCKER_REPO="${IMAGE_REPOSITORY}/${component##*/}" \
+            ./hack/run-tool.sh ko build \
+              --tags "${IMAGE_TAG}" \
+              --platform linux/amd64,linux/arm64 \
+              --bare \
+              "./cmd/${component}"
+          done
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package and push Helm charts
+        env:
+          HELM_EXPERIMENTAL_OCI: "1"
+          CHART_VERSION: 0.4.1-0.20261021171435-ebcb2e3eaafe
+          APP_VERSION: v0.4.1-0.20261021171435-ebcb2e3eaafe
+          CHART_REPOSITORY: oci://ghcr.io/spichen/substrate/helm
+        run: |
+          set -o errexit -o nounset -o pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io \
+              --username "${{ github.actor }}" \
+              --password-stdin
+          package_dir="${RUNNER_TEMP}/helm-packages"
+          mkdir -p "${package_dir}"
+          helm package charts/substrate-crds \
+            --destination "${package_dir}" \
+            --version "${CHART_VERSION}" \
+            --app-version "${APP_VERSION}"
+          helm package charts/substrate \
+            --destination "${package_dir}" \
+            --version "${CHART_VERSION}" \
+            --app-version "${APP_VERSION}"
+          helm package charts/substrate-podcert \
+            --destination "${package_dir}" \
+            --version "${CHART_VERSION}" \
+            --app-version "${APP_VERSION}"
+          helm push "${package_dir}/substrate-crds-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
+          helm push "${package_dir}/substrate-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
+          helm push "${package_dir}/substrate-podcert-${CHART_VERSION}.tgz" "${CHART_REPOSITORY}"
+
+      - name: Publish package visibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o errexit -o nounset -o pipefail
+          # Packages linked to this public repository should already be public.
+          # Print the result either way so a private package is visible in the log.
+          gh api --paginate "user/packages?package_type=container&per_page=100" \
+            --jq '.[] | select(.name | startswith("substrate")) | {name,visibility}'
+          while read -r name; do
+            [ -n "${name}" ] || continue
+            encoded=${name//\//%2F}
+            gh api --method PATCH "/user/packages/container/${encoded}" \
+              -f visibility=public --jq '{name,visibility}' \
+              || echo "could not set ${name} public"
+          done < <(gh api --paginate "user/packages?package_type=container&per_page=100" \
+            --jq '.[] | select(.name | startswith("substrate")) | .name')
