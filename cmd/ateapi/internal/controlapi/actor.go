@@ -103,8 +103,10 @@ func (s *ServiceImpl) CreateActor(ctx context.Context, inActor *ateapipb.Actor) 
 				return nil, apierror.FailedPrecondition("Tag cloning does not support ActorTemplates that reference a SharedVolume")
 			}
 		}
-	case templateHasSharedVolumeRef(template):
-		// TODO(shared-volumes): restore from the golden once checkpoint and restore mount options agree for external volume refs; see docs/csi-volumes.md.
+	case templateHasSharedVolumeRef(template) && !goldenMountsSharedVolumes(template):
+		// A golden taken over placeholders cannot be restored over the real
+		// volumes: runsc refuses a restore whose mount options differ from the
+		// checkpoint's. See docs/csi-volumes.md.
 	default:
 		tagRef = template.GetStatus().GetGoldenSnapshotStatus().GetGoldenTag()
 	}
@@ -132,7 +134,7 @@ func (s *ServiceImpl) CreateActor(ctx context.Context, inActor *ateapipb.Actor) 
 		}
 		return nil, resources.ToAPIError(errs)
 	}
-	if !isGoldenActor(inActor, template) {
+	if !isGoldenActor(inActor, template) || goldenMountsSharedVolumes(template) {
 		refVols, err := resolveSharedVolumeRefs(ctx, s.store, inActor, template)
 		if err != nil {
 			return nil, err

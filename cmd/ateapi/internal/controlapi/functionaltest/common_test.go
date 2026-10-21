@@ -470,6 +470,13 @@ func createTemplateWithVolumes(t *testing.T, tc *testContext, ns string, volumes
 // labels, so each test's template still selects only its own pool.
 func createTemplateWithContainersAndVolumes(t *testing.T, tc *testContext, ns string, containers []*ateapipb.Container, volumes []*ateapipb.Volume) *ateapipb.ActorTemplate {
 	t.Helper()
+	return createTemplateWithGoldenConfig(t, tc, ns, containers, volumes, nil)
+}
+
+// createTemplateWithGoldenConfig is createTemplateWithContainersAndVolumes with
+// the template's golden snapshot config set.
+func createTemplateWithGoldenConfig(t *testing.T, tc *testContext, ns string, containers []*ateapipb.Container, volumes []*ateapipb.Volume, golden *ateapipb.GoldenSnapshotConfig) *ateapipb.ActorTemplate {
+	t.Helper()
 
 	// Sandbox binaries live on the (cluster-scoped) SandboxConfig the
 	// actor's WorkerPool resolves. Create the gvisor-default SandboxConfig so
@@ -484,7 +491,8 @@ func createTemplateWithContainersAndVolumes(t *testing.T, tc *testContext, ns st
 				Name:     "tmpl1",
 			},
 			SnapshotConfig: &ateapipb.SnapshotConfig{
-				StorageLocation: testStorageLocation,
+				StorageLocation:      testStorageLocation,
+				GoldenSnapshotConfig: golden,
 			},
 			Containers: containers,
 			Volumes:    volumes,

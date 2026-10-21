@@ -1476,6 +1476,32 @@ message GoldenSnapshotConfig {
   // +k8s:minimum=1
   // +k8s:maximum=2 # keep this in sync with the GoldenSnapshotMode enum
   GoldenSnapshotMode mode = 1;
+
+  // mount_shared_volumes warms the golden actor up on the template's
+  // SharedVolumes instead of empty placeholders, so that actors created from
+  // the template can restore the golden snapshot. runsc refuses a restore whose
+  // mount options differ from the checkpoint's, and it derives some of them
+  // from the bind source's filesystem, so a golden taken over a placeholder
+  // cannot be restored over a CSI volume.
+  //
+  // Each actor restores the golden's application state over its own view of
+  // the volumes. That is only safe when the application holds nothing open
+  // in a shared volume when the golden is taken. Every external.shared_volume
+  // in the template must be named.
+  //
+  // +k8s:optional
+  bool mount_shared_volumes = 2;
+
+  // shared_volume_sub_paths roots the golden actor's view of a SharedVolume,
+  // by template volume name, at a directory inside it, as
+  // Actor.shared_volume_sub_paths does for an actor. It is required for every
+  // volume the template mounts writable, so the golden actor never writes
+  // outside it, and allowed only with mount_shared_volumes.
+  //
+  // +k8s:optional
+  // +k8s:maxProperties=32
+  // +k8s:eachKey=+k8s:format=k8s-short-name
+  map<string, string> shared_volume_sub_paths = 3;
 }
 
 // Container is a single application container of an ActorTemplate.
