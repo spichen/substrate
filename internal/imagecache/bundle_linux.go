@@ -87,11 +87,15 @@ func SetupBundleRootfs(bundlePath string) error {
 	// Repair merged directory metadata shadowed by implicitly-created parent
 	// dirs (see implicitdirs.go); the chmod/chowns copy up into this bundle's
 	// private upper, never into the shared pool.
+	rootFixup, err := resolveRootFixup(spec.Layers)
+	if err != nil {
+		return err
+	}
 	fixups, err := resolveImplicitDirFixups(spec.Layers)
 	if err != nil {
 		return fmt.Errorf("while resolving implicit dir metadata: %w", err)
 	}
-	if err := applyDirFixups(rootfs, fixups); err != nil {
+	if err := applyDirFixups(rootfs, append([]dirFixup{rootFixup}, fixups...)); err != nil {
 		return fmt.Errorf("while repairing implicit dir metadata: %w", err)
 	}
 

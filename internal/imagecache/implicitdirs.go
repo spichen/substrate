@@ -53,6 +53,26 @@ type dirFixup struct {
 	HasOwner bool
 }
 
+// resolveRootFixup gives the merged root the attributes of the top-most
+// layer's root. overlayfs takes the root's attributes from the upper
+// directory, which the bundle creates private, so without it the workload's
+// "/" is root-only 0700 and no other user can resolve any path.
+func resolveRootFixup(layers []string) (dirFixup, error) {
+	fsRoot := filepath.Join(layers[len(layers)-1], layerFSDirName)
+	fi, err := os.Stat(fsRoot)
+	if err != nil {
+		return dirFixup{}, fmt.Errorf("while reading root of layer %q: %w", fsRoot, err)
+	}
+	fixup := dirFixup{
+		Path: ".",
+		Mode: fi.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky),
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		fixup.UID, fixup.GID, fixup.HasOwner = int(st.Uid), int(st.Gid), true
+	}
+	return fixup, nil
+}
+
 // resolveImplicitDirFixups computes the repairs needed for an image whose
 // (bottom-first) layer chain is layers: for every directory whose merged
 // attributes would come from a layer that only created it implicitly, find
