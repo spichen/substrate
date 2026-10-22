@@ -55,7 +55,7 @@ func workloadSpecFromActorTemplate(actorTemplate *ateapipb.ActorTemplate, actor 
 	// already ensured that only one source is set.
 	for _, vol := range actorTemplate.GetVolumes() {
 		switch {
-		case vol.GetExternal().GetSharedVolume() != nil && isGoldenActor(actor, actorTemplate):
+		case vol.GetExternal().GetSharedVolume() != nil && isGoldenActor(actor, actorTemplate) && !goldenMountsSharedVolumes(actorTemplate):
 			workloadSpec.Volumes = append(workloadSpec.Volumes, &ateletpb.Volume{
 				Name:     vol.GetName(),
 				EmptyDir: &ateletpb.EmptyDirVolumeSource{},
@@ -171,7 +171,7 @@ func appendExternalVolumes(workloadSpec *ateletpb.WorkloadSpec, template *ateapi
 			if !isVolumeMounted(vol.GetName(), template) {
 				continue
 			}
-			if vol.GetExternal().GetSharedVolume() != nil && isGoldenActor(actor, template) {
+			if vol.GetExternal().GetSharedVolume() != nil && isGoldenActor(actor, template) && !goldenMountsSharedVolumes(template) {
 				continue
 			}
 			if actor == nil {
@@ -210,10 +210,17 @@ func appendExternalVolumes(workloadSpec *ateletpb.WorkloadSpec, template *ateapi
 }
 
 // actorMountSubPath resolves a mount's sub_path beneath the actor's root for
-// that shared volume, if the actor set one.
+// that shared volume, if the actor set one. The golden actor takes its roots
+// from the template's golden snapshot config instead.
 func actorMountSubPath(mount *ateapipb.VolumeMount, actor *ateapipb.Actor, template *ateapipb.ActorTemplate) string {
-	root := actor.GetSharedVolumeSubPaths()[mount.GetName()]
-	if root == "" || isGoldenActor(actor, template) {
+	var root string
+	switch {
+	case !isGoldenActor(actor, template):
+		root = actor.GetSharedVolumeSubPaths()[mount.GetName()]
+	case goldenMountsSharedVolumes(template):
+		root = template.GetSnapshotConfig().GetGoldenSnapshotConfig().GetSharedVolumeSubPaths()[mount.GetName()]
+	}
+	if root == "" {
 		return mount.GetSubPath()
 	}
 	return joinSubPath(root, mount.GetSubPath())
@@ -224,6 +231,17 @@ func joinSubPath(root, sub string) string {
 		return root
 	}
 	return root + "/" + sub
+}
+
+func isVolumeMountedWritable(volumeName string, template *ateapipb.ActorTemplate) bool {
+	for _, ctr := range template.GetContainers() {
+		for _, mount := range ctr.GetVolumeMounts() {
+			if mount.GetName() == volumeName && !mount.GetReadOnly() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isVolumeMounted(volumeName string, template *ateapipb.ActorTemplate) bool {

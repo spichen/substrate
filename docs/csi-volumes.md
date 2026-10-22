@@ -267,17 +267,43 @@ kubectl ate create actor consumer-42 -a demo --template consumer --volume shared
 Bindings are validated and recorded when the actor is created and cannot change
 afterwards.
 
-The golden snapshot is not used for templates that reference a `SharedVolume`. The
-first resume of such an actor is a cold boot from the image, and later resumes
-restore the actor's own snapshot, which was taken over the real volume. An
-explicit `sourceTag` is refused at actor creation. The reason is in gVisor:
-the golden actor warms up against a local empty directory at the mount path,
-but runsc derives the `disable_file_handle_sharing` mount option from the bind
-source's filesystem (NFS and FUSE get it, local disks do not) and refuses a
-restore whose mount options differ from the checkpoint's. Supporting golden
-restores here is follow-up work; the candidate approaches are a golden actor
-that warms up on a scratch volume from the same driver, or an upstream runsc
-change that excludes host-derived mount options from restore validation.
+By default the golden snapshot is not used for templates that reference a
+`SharedVolume`. The first resume of such an actor is a cold boot from the image,
+and later resumes restore the actor's own snapshot, which was taken over the
+real volume. An explicit `sourceTag` is refused at actor creation. The reason is
+in gVisor: the golden actor warms up against a local empty directory at the
+mount path, but runsc derives the `disable_file_handle_sharing` mount option
+from the bind source's filesystem (NFS and FUSE get it, local disks do not) and
+refuses a restore whose mount options differ from the checkpoint's.
+
+A template can instead warm its golden actor up on the SharedVolumes
+themselves, so that the golden is taken over the same filesystem every actor
+mounts:
+
+```yaml
+snapshotConfig:
+  goldenSnapshotConfig:
+    mode: GOLDEN_SNAPSHOT_MODE_ENABLED
+    mountSharedVolumes: true
+    sharedVolumeSubPaths:
+      session: .golden-session
+```
+
+With `mountSharedVolumes`, every `external.sharedVolume` in the template must be
+named, and every volume the template mounts writable needs an entry in
+`sharedVolumeSubPaths`. That entry roots the golden actor's view, as an actor's
+`sharedVolumeSubPaths` does, so the golden actor never writes outside it.
+Read-only mounts of a volume without an entry use the template's `subPath`.
+Actors created from the template then start from the golden tag, and their
+first resume restores it over their own view of the volumes.
+
+The golden's application state is restored as it was, over a different
+directory. That is only safe when the application holds no file, directory or
+mapping open in a shared volume when the golden is taken: such a handle is
+reopened by path in the actor's view on restore, where it may not exist or may
+be another file. Substrate cannot check this; a template should opt in only for
+an application that touches its shared volumes after it has served its first
+request, not during warm-up.
 
 ### Per-mount views of a shared volume
 

@@ -47,6 +47,42 @@ func templateHasSharedVolumeRef(template *ateapipb.ActorTemplate) bool {
 	return false
 }
 
+// goldenMountsSharedVolumes reports whether the template's golden actor warms
+// up on its SharedVolumes rather than on empty placeholders.
+func goldenMountsSharedVolumes(template *ateapipb.ActorTemplate) bool {
+	return templateHasSharedVolumeRef(template) && template.GetSnapshotConfig().GetGoldenSnapshotConfig().GetMountSharedVolumes()
+}
+
+// validateGoldenSharedVolumes checks that a golden actor mounting the
+// template's SharedVolumes can resolve them without bindings and writes only
+// inside its own directories.
+func validateGoldenSharedVolumes(template *ateapipb.ActorTemplate) error {
+	golden := template.GetSnapshotConfig().GetGoldenSnapshotConfig()
+	subPaths := golden.GetSharedVolumeSubPaths()
+	if !golden.GetMountSharedVolumes() {
+		if len(subPaths) > 0 {
+			return apierror.InvalidArgument("snapshot_config.golden_snapshot_config.shared_volume_sub_paths requires mount_shared_volumes")
+		}
+		return nil
+	}
+	for _, vol := range template.GetVolumes() {
+		ref := vol.GetExternal().GetSharedVolume()
+		if ref == nil {
+			continue
+		}
+		if ref.GetName() == "" {
+			return apierror.InvalidArgument("snapshot_config.golden_snapshot_config.mount_shared_volumes requires every external.shared_volume to be named; volume %q is not", vol.GetName())
+		}
+		if subPaths[vol.GetName()] == "" && isVolumeMountedWritable(vol.GetName(), template) {
+			return apierror.InvalidArgument("snapshot_config.golden_snapshot_config.shared_volume_sub_paths must root volume %q, which the template mounts writable", vol.GetName())
+		}
+	}
+	if err := validateSharedVolumeSubPaths(subPaths, template); err != nil {
+		return apierror.InvalidArgument("snapshot_config.golden_snapshot_config: %v", err)
+	}
+	return nil
+}
+
 // resolveSharedVolumeRefs checks the actor's bindings against the template
 // and returns a mount for every SharedVolume the actor references.
 func resolveSharedVolumeRefs(ctx context.Context, st sharedVolumeRefStore, actor *ateapipb.Actor, template *ateapipb.ActorTemplate) ([]*ateapipb.ExternalVolume, error) {

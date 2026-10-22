@@ -16,8 +16,10 @@ package functionaltest
 
 import (
 	"context"
+	"slices"
 	"testing"
 
+	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc/codes"
 )
@@ -147,5 +149,136 @@ func TestExternalVolumeTemplate_FirstResumeRestoresGolden(t *testing.T) {
 	}
 	if got := tc.fakeAtelet.lastRestoreRequest().GetSnapshot().GetObject().GetSnapshotUri(); got != goldenSnapshotURI(t) {
 		t.Errorf("first resume restored %q, want the golden %q", got, goldenSnapshotURI(t))
+	}
+}
+
+func goldenOverSharedVolumeContainers(mounts []*ateapipb.VolumeMount) []*ateapipb.Container {
+	return []*ateapipb.Container{{
+		Name:         "main",
+		Image:        "main@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		Command:      []string{"/main"},
+		VolumeMounts: mounts,
+	}}
+}
+
+func TestSharedVolumeRef_GoldenOverSharedVolumes(t *testing.T) {
+	ns := namespaceForTest("ns-extvol-golden-shared")
+	tc, _ := setupSharedVolumeTest(t, ns)
+	defer tc.cleanup()
+
+	shared := createSharedVolume(t, tc, "shared", ateapipb.DeleteTrigger_DELETE_TRIGGER_MANUAL)
+	tmpl := createTemplateWithGoldenConfig(t, tc, ns,
+		goldenOverSharedVolumeContainers([]*ateapipb.VolumeMount{
+			{Name: "work", MountPath: "/mnt/work"},
+			{Name: "work", MountPath: "/mnt/skills", SubPath: "skills", ReadOnly: true},
+		}),
+		[]*ateapipb.Volume{{Name: "work", External: &ateapipb.ExternalVolumeSource{SharedVolume: &ateapipb.SharedVolumeRef{Name: "shared"}}}},
+		&ateapipb.GoldenSnapshotConfig{
+			Mode:                 ateapipb.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_ENABLED,
+			MountSharedVolumes:   true,
+			SharedVolumeSubPaths: map[string]string{"work": ".golden"},
+		})
+	workerName := createWorkerPod(t, tc, ns, "worker-1", "node1", "pool1")
+	ctx := context.Background()
+
+	t.Run("golden actor records the shared volume", func(t *testing.T) {
+		golden, err := tc.client.CreateActor(ctx, &ateapipb.CreateActorRequest{Actor: &ateapipb.Actor{
+			Metadata:      &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: tmpl.GetMetadata().GetUid()},
+			ActorTemplate: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "tmpl1"},
+		}})
+		if err != nil {
+			t.Fatalf("CreateActor(golden) failed: %v", err)
+		}
+		vols := golden.GetStatus().GetExternalVolumes()
+		if len(vols) != 1 || vols[0].GetStorageVolumeId() != shared.GetVolumeId() {
+			t.Fatalf("golden actor external volumes = %v, want the SharedVolume %q", vols, shared.GetVolumeId())
+		}
+	})
+
+	t.Run("actor restores the golden over its own directory", func(t *testing.T) {
+		if _, err := tc.client.CreateActor(ctx, &ateapipb.CreateActorRequest{Actor: &ateapipb.Actor{
+			Metadata:             &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: "session-1"},
+			ActorTemplate:        &ateapipb.ObjectRef{Atespace: testAtespace, Name: "tmpl1"},
+			SharedVolumeSubPaths: map[string]string{"work": "tenant-a/session-1"},
+		}}); err != nil {
+			t.Fatalf("CreateActor failed: %v", err)
+		}
+		if got := durableSnapshotURI(getActor(t, tc, "session-1").GetStatus()); got != goldenSnapshotURI(t) {
+			t.Fatalf("new actor snapshot = %q, want the golden %q", got, goldenSnapshotURI(t))
+		}
+
+		waitForWorkerAvailable(t, tc, workerName)
+		resetAteletCalls(tc)
+		if _, err := tc.client.ResumeActor(ctx, &ateapipb.ResumeActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "session-1"}}); err != nil {
+			t.Fatalf("ResumeActor failed: %v", err)
+		}
+		if run, restore := ateletCalls(tc); run || !restore {
+			t.Fatalf("first resume: Run=%v Restore=%v, want a restore from the golden", run, restore)
+		}
+		req := tc.fakeAtelet.lastRestoreRequest()
+		if got := req.GetSnapshot().GetObject().GetSnapshotUri(); got != goldenSnapshotURI(t) {
+			t.Errorf("first resume restored %q, want the golden %q", got, goldenSnapshotURI(t))
+		}
+		var subPaths []string
+		for _, mount := range req.GetSpec().GetContainers()[0].GetVolumeMounts() {
+			subPaths = append(subPaths, mount.GetSubPath())
+		}
+		if want := []string{"tenant-a/session-1", "tenant-a/session-1/skills"}; !slices.Equal(subPaths, want) {
+			t.Errorf("restore mounts sub paths %v, want %v", subPaths, want)
+		}
+	})
+}
+
+func TestSharedVolumeRef_GoldenOverSharedVolumesValidation(t *testing.T) {
+	ns := namespaceForTest("ns-extvol-golden-invalid")
+	tc, _ := setupSharedVolumeTest(t, ns)
+	defer tc.cleanup()
+	ensureDefaultGvisorSandboxConfig(t, tc)
+
+	named := &ateapipb.Volume{Name: "work", External: &ateapipb.ExternalVolumeSource{SharedVolume: &ateapipb.SharedVolumeRef{Name: "shared"}}}
+	unnamed := &ateapipb.Volume{Name: "work", External: &ateapipb.ExternalVolumeSource{SharedVolume: &ateapipb.SharedVolumeRef{}}}
+	writable := []*ateapipb.VolumeMount{{Name: "work", MountPath: "/mnt/work"}}
+	for _, tt := range []struct {
+		name   string
+		volume *ateapipb.Volume
+		golden *ateapipb.GoldenSnapshotConfig
+		want   string
+	}{
+		{
+			name:   "sub paths without mounting",
+			volume: named,
+			golden: &ateapipb.GoldenSnapshotConfig{Mode: ateapipb.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_ENABLED, SharedVolumeSubPaths: map[string]string{"work": ".golden"}},
+			want:   `shared_volume_sub_paths requires mount_shared_volumes`,
+		},
+		{
+			name:   "unnamed ref",
+			volume: unnamed,
+			golden: &ateapipb.GoldenSnapshotConfig{Mode: ateapipb.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_ENABLED, MountSharedVolumes: true, SharedVolumeSubPaths: map[string]string{"work": ".golden"}},
+			want:   `every external.shared_volume to be named; volume "work" is not`,
+		},
+		{
+			name:   "writable volume without a root",
+			volume: named,
+			golden: &ateapipb.GoldenSnapshotConfig{Mode: ateapipb.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_ENABLED, MountSharedVolumes: true},
+			want:   `must root volume "work", which the template mounts writable`,
+		},
+		{
+			name:   "root escapes the volume",
+			volume: named,
+			golden: &ateapipb.GoldenSnapshotConfig{Mode: ateapipb.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_ENABLED, MountSharedVolumes: true, SharedVolumeSubPaths: map[string]string{"work": "../golden"}},
+			want:   `shared_volume_sub_paths\["work"\]`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tc.client.CreateActorTemplate(context.Background(), &ateapipb.CreateActorTemplateRequest{ActorTemplate: &ateapipb.ActorTemplate{
+				Metadata:       &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: "invalid"},
+				SnapshotConfig: &ateapipb.SnapshotConfig{StorageLocation: testStorageLocation, GoldenSnapshotConfig: tt.golden},
+				Containers:     goldenOverSharedVolumeContainers(writable),
+				Volumes:        []*ateapipb.Volume{tt.volume},
+				WorkerSelector: &ateapipb.Selector{MatchLabels: map[string]string{poolLabelKey: ns}},
+				Resources:      resources.CPUMemory(1000, 512<<20),
+			}})
+			assertGrpcErrorRegex(t, err, codes.InvalidArgument, tt.want)
+		})
 	}
 }

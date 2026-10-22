@@ -43,6 +43,9 @@ func (s *RPCService) CreateActorTemplate(ctx context.Context, req *ateapipb.Crea
 	if errs := apivalidation.ValidateCreateActorTemplateRequest(ctx, req); len(errs) > 0 {
 		return nil, resources.ToAPIError(errs)
 	}
+	if err := validateGoldenSharedVolumes(in); err != nil {
+		return nil, err
+	}
 
 	templateRef := resources.ActorTemplateRefFromActorTemplate(in)
 

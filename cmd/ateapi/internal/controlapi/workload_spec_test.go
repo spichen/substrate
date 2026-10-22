@@ -804,3 +804,53 @@ func TestWorkloadSpecSharedVolumeSubPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkloadSpecGoldenOverSharedVolumes(t *testing.T) {
+	template := &ateapipb.ActorTemplate{
+		Metadata: &ateapipb.ResourceMetadata{Atespace: "space-abc", Name: "tmpl1", Uid: "tmpl1-uid"},
+		SnapshotConfig: &ateapipb.SnapshotConfig{GoldenSnapshotConfig: &ateapipb.GoldenSnapshotConfig{
+			MountSharedVolumes:   true,
+			SharedVolumeSubPaths: map[string]string{"session": ".golden"},
+		}},
+		Volumes: []*ateapipb.Volume{
+			{Name: "session", External: &ateapipb.ExternalVolumeSource{SharedVolume: &ateapipb.SharedVolumeRef{Name: "shared"}}},
+			{Name: "skills", External: &ateapipb.ExternalVolumeSource{SharedVolume: &ateapipb.SharedVolumeRef{Name: "shared"}}},
+		},
+		Containers: []*ateapipb.Container{{
+			Name: "main",
+			VolumeMounts: []*ateapipb.VolumeMount{
+				{Name: "session", MountPath: "/workspace"},
+				{Name: "session", MountPath: "/history", SubPath: "history", ReadOnly: true},
+				{Name: "skills", MountPath: "/skills", SubPath: "skills", ReadOnly: true},
+			},
+		}},
+	}
+	golden := &ateapipb.Actor{
+		Metadata: &ateapipb.ResourceMetadata{Atespace: "space-abc", Name: "tmpl1-uid"},
+		Status: &ateapipb.ActorStatus{ExternalVolumes: []*ateapipb.ExternalVolume{
+			{Name: "session", SharedVolumeName: "shared", ReadWriteMany: true, StorageVolumeId: "disk-shared", VolumeType: "nfs.csi.k8s.io"},
+			{Name: "skills", SharedVolumeName: "shared", ReadWriteMany: true, StorageVolumeId: "disk-shared", VolumeType: "nfs.csi.k8s.io"},
+		}},
+	}
+
+	got, err := workloadSpecFromActorTemplate(template, golden, nil)
+	if err != nil {
+		t.Fatalf("workloadSpecFromActorTemplate: %v", err)
+	}
+	external := &ateletpb.ExternalVolumeSource{StorageVolumeId: "disk-shared", VolumeType: "nfs.csi.k8s.io", ReadWriteMany: true}
+	wantVolumes := []*ateletpb.Volume{
+		{Name: "session", External: external},
+		{Name: "skills", External: external},
+	}
+	if diff := cmp.Diff(wantVolumes, got.GetVolumes(), protocmp.Transform()); diff != "" {
+		t.Errorf("volumes mismatch (-want +got):\n%s", diff)
+	}
+	wantMounts := []*ateletpb.VolumeMount{
+		{Name: "session", MountPath: "/workspace", SubPath: ".golden"},
+		{Name: "session", MountPath: "/history", SubPath: ".golden/history", ReadOnly: true},
+		{Name: "skills", MountPath: "/skills", SubPath: "skills", ReadOnly: true},
+	}
+	if diff := cmp.Diff(wantMounts, got.GetContainers()[0].GetVolumeMounts(), protocmp.Transform()); diff != "" {
+		t.Errorf("mounts mismatch (-want +got):\n%s", diff)
+	}
+}
