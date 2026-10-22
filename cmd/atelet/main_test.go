@@ -30,26 +30,23 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/pflag"
+	"go.ate.dev/substrate/cmd/atelet/internal/actordirs"
 	"go.ate.dev/substrate/cmd/atelet/internal/ateletpath"
 	"go.ate.dev/substrate/cmd/atelet/internal/snapshottracker"
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/ateattr"
 	"go.ate.dev/substrate/internal/ateinterceptors"
 	"go.ate.dev/substrate/internal/atelet"
-	"go.ate.dev/substrate/internal/imagecache"
-	"go.ate.dev/substrate/internal/ocispec"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
 	"go.ate.dev/substrate/internal/proto/ateworkerpb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/internal/serverboot"
 	"go.ate.dev/substrate/pkg/objectstorage"
-	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -57,8 +54,6 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
-
-const testPauseImage = "registry.k8s.io/pause:3.10.2@sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4"
 
 const (
 	snapshotOwnerUID = "3d7f1b62-8a04-4c19-b5e6-2f9c7a1d0e38"
@@ -149,8 +144,8 @@ func TestValidateSnapshotUploadEstThroughput(t *testing.T) {
 	}
 }
 
-// Upload and detach worker flags must be at least 1, report workers must be at
-// least 0, and each flag defaults to the tracker's default count.
+// Upload, detach, and report worker flags must be at least 1, and each flag
+// defaults to the tracker's default count.
 func TestValidateSnapshotWorkerFlags(t *testing.T) {
 	setFlags := func(upload, detach, report int) {
 		*snapshotUploadWorkers, *snapshotDetachWorkers, *snapshotReportWorkers = upload, detach, report
@@ -166,11 +161,11 @@ func TestValidateSnapshotWorkerFlags(t *testing.T) {
 	}{
 		{"defaults", snapshottracker.DefaultUploadWorkers, snapshottracker.DefaultDetachWorkers, snapshottracker.DefaultReportWorkers, false},
 		{"single worker each", 1, 1, 1, false},
-		{"zero report workers", 2, 2, 0, false},
 		{"zero upload workers", 0, 2, 1, true},
 		{"negative upload workers", -1, 2, 1, true},
 		{"zero detach workers", 2, 0, 1, true},
 		{"negative detach workers", 2, -1, 1, true},
+		{"zero report workers", 2, 2, 0, true},
 		{"negative report workers", 2, 2, -1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -197,94 +192,6 @@ func TestValidateSnapshotWorkerFlags(t *testing.T) {
 	}
 }
 
-// TestCopyLocalCheckpointLinks covers staging a local checkpoint into the restore
-// dir: the files must land as extra links to the cached snapshot rather than
-// copies, so a resume does not rewrite the image's working set. Sharing the inode
-// is what MergeDeltaIntoBase's Nlink check keys off to refuse its in-place overlay.
-func TestCopyLocalCheckpointLinks(t *testing.T) {
-	const snapshot = "snap-1"
-	want := []byte("checkpoint pages")
-
-	newDirs := func(t *testing.T) (srcDir, dstDir string) {
-		t.Helper()
-		root := t.TempDir()
-		srcDir, dstDir = filepath.Join(root, "local-checkpoint"), filepath.Join(root, "restore-state")
-		if err := os.MkdirAll(filepath.Join(srcDir, snapshot), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(dstDir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(srcDir, snapshot, "memory-ranges"), want, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return srcDir, dstDir
-	}
-	inode := func(t *testing.T, path string) uint64 {
-		t.Helper()
-		fi, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return fi.Sys().(*syscall.Stat_t).Ino
-	}
-
-	t.Run("links when it can", func(t *testing.T) {
-		srcDir, dstDir := newDirs(t)
-		s := &Atelet{}
-		if err := s.copyLocalCheckpoint(context.Background(), filepath.Dir(srcDir), snapshot, srcDir, dstDir, []string{"memory-ranges"}); err != nil {
-			t.Fatalf("copyLocalCheckpoint: %v", err)
-		}
-		src := filepath.Join(srcDir, snapshot, "memory-ranges")
-		dst := filepath.Join(dstDir, "memory-ranges")
-		if got, err := os.ReadFile(dst); err != nil || !bytes.Equal(got, want) {
-			t.Fatalf("dst content = %q (err %v), want %q", got, err, want)
-		}
-		if inode(t, src) != inode(t, dst) {
-			t.Error("staged file is a copy; expected a link to the cached snapshot")
-		}
-	})
-
-	t.Run("falls back to copying across filesystems", func(t *testing.T) {
-		srcDir, dstDir := newDirs(t)
-		// EXDEV stands in for the mount boundary a unit test cannot produce.
-		orig := linkFile
-		linkFile = func(*os.Root, string, string) error { return unix.EXDEV }
-		t.Cleanup(func() { linkFile = orig })
-
-		s := &Atelet{}
-		if err := s.copyLocalCheckpoint(context.Background(), filepath.Dir(srcDir), snapshot, srcDir, dstDir, []string{"memory-ranges"}); err != nil {
-			t.Fatalf("copyLocalCheckpoint: %v", err)
-		}
-		dst := filepath.Join(dstDir, "memory-ranges")
-		if got, err := os.ReadFile(dst); err != nil || !bytes.Equal(got, want) {
-			t.Fatalf("dst content = %q (err %v), want %q", got, err, want)
-		}
-		if inode(t, filepath.Join(srcDir, snapshot, "memory-ranges")) == inode(t, dst) {
-			t.Error("expected a copy on the fallback path, got a link")
-		}
-	})
-
-	// Only EXDEV may fall back. Copying on any other link failure would silently
-	// undo this optimization, and would hand sparsefile.CopyFile a dst that may already be a
-	// link to src, where its O_TRUNC empties both before the copy reads a byte.
-	t.Run("other link failures are fatal", func(t *testing.T) {
-		srcDir, dstDir := newDirs(t)
-		dst := filepath.Join(dstDir, "memory-ranges")
-		if err := os.Link(filepath.Join(srcDir, snapshot, "memory-ranges"), dst); err != nil {
-			t.Fatal(err)
-		}
-		s := &Atelet{}
-		// dst already exists, so os.Link fails with EEXIST.
-		if err := s.copyLocalCheckpoint(context.Background(), filepath.Dir(srcDir), snapshot, srcDir, dstDir, []string{"memory-ranges"}); err == nil {
-			t.Fatal("copyLocalCheckpoint accepted a non-EXDEV link failure, want an error")
-		}
-		if got, err := os.ReadFile(dst); err != nil || !bytes.Equal(got, want) {
-			t.Fatalf("dst content = %q (err %v), want the untouched %q", got, err, want)
-		}
-	})
-}
-
 func TestSnapshotManifestActorMetadata(t *testing.T) {
 	rec := sandboxAssetsRecord{
 		Atespace:              "team-a",
@@ -309,7 +216,7 @@ func TestSnapshotManifestActorMetadata(t *testing.T) {
 // Run/Restore, which has no fidelity, parses back with an empty fidelity and
 // does not serialize a fidelity key at all.
 func TestSnapshotManifestFidelityAbsent(t *testing.T) {
-	legacy := []byte(`{"sandboxClass":"gvisor","pauseImage":"` + testPauseImage + `","snapshotFiles":["checkpoint.img"]}`)
+	legacy := []byte(`{"sandboxClass":"gvisor","snapshotFiles":["checkpoint.img"]}`)
 	rec, err := unmarshalSandboxRecord(legacy)
 	if err != nil {
 		t.Fatalf("unmarshalSandboxRecord(legacy manifest): %v", err)
@@ -324,70 +231,6 @@ func TestSnapshotManifestFidelityAbsent(t *testing.T) {
 	}
 	if bytes.Contains(got, []byte(`"fidelity"`)) {
 		t.Errorf("fidelity-less record serialized a fidelity key: %s", got)
-	}
-}
-
-// TestSnapshotManifestPauseImage pins that only a gVisor manifest needs a
-// pause image: micro-VM sandboxes run no pause container.
-func TestSnapshotManifestPauseImage(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		manifest string
-		wantErr  bool
-	}{
-		{"gvisor without pause image", `{"sandboxClass":"gvisor","snapshotFiles":["checkpoint.img"]}`, true},
-		{"gvisor with pause image", `{"sandboxClass":"gvisor","pauseImage":"` + testPauseImage + `","snapshotFiles":["checkpoint.img"]}`, false},
-		{"microvm without pause image", `{"sandboxClass":"microvm","snapshotFiles":["checkpoint.img"]}`, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := unmarshalSandboxRecord([]byte(tc.manifest))
-			if tc.wantErr {
-				if err == nil {
-					t.Fatal("unmarshalSandboxRecord succeeded, want an error")
-				}
-				if !strings.Contains(err.Error(), "pauseImage") {
-					t.Errorf("error = %v, want it to name pauseImage", err)
-				}
-			} else if err != nil {
-				t.Fatalf("unmarshalSandboxRecord: %v", err)
-			}
-		})
-	}
-}
-
-// TestPrepareOCIBundlesPause pins that the pause bundle is built only when the
-// sandbox has a pause image.
-func TestPrepareOCIBundlesPause(t *testing.T) {
-	host := imageVolumeTestRegistry(t)
-	image := host + "/actor:v1"
-	pushTestImage(t, image, singleFileLayer(t, "bin/app", "app"))
-	spec := &ateletpb.WorkloadSpec{
-		Containers: []*ateletpb.Container{{Name: "app", Image: image, Command: []string{"/bin/app"}}},
-	}
-
-	for _, tc := range []struct {
-		name       string
-		pauseImage string
-		wantPause  bool
-	}{
-		{"with pause image", image, true},
-		{"without pause image", "", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			useTempNodeDirs(t)
-			const actorUID = "actor-uid-1"
-			s := &Atelet{imageCache: newImageVolumeStore(t)}
-			if _, err := s.prepareOCIBundles(t.Context(), actorUID, resources.ActorRef{}, spec, tc.pauseImage); err != nil {
-				t.Fatalf("prepareOCIBundles: %v", err)
-			}
-			if _, err := os.Stat(filepath.Join(ateletpath.OCIBundlePath(actorUID, "app"), imagecache.OverlaySpecFileName)); err != nil {
-				t.Errorf("app bundle: %v", err)
-			}
-			_, err := os.Stat(ateletpath.OCIBundlePath(actorUID, ocispec.PauseContainer))
-			if gotPause := err == nil; gotPause != tc.wantPause {
-				t.Errorf("pause bundle exists = %v, want %v (stat: %v)", gotPause, tc.wantPause, err)
-			}
-		})
 	}
 }
 
@@ -413,7 +256,7 @@ func TestPrepareOCIBundlesFillsContainerSpec(t *testing.T) {
 	}
 
 	s := &Atelet{imageCache: newImageVolumeStore(t)}
-	got, err := s.prepareOCIBundles(t.Context(), "actor-uid-1", resources.ActorRef{}, spec, "")
+	got, err := s.prepareOCIBundles(t.Context(), "actor-uid-1", resources.ActorRef{}, spec)
 	if err != nil {
 		t.Fatalf("prepareOCIBundles: %v", err)
 	}
@@ -431,7 +274,6 @@ func TestPrepareOCIBundlesFillsContainerSpec(t *testing.T) {
 func TestSnapshotManifestRejectsNonLocalFile(t *testing.T) {
 	manifest, err := json.Marshal(sandboxAssetsRecord{
 		SandboxClass:  "gvisor",
-		PauseImage:    testPauseImage,
 		SnapshotFiles: []string{"../outside"},
 	})
 	if err != nil {
@@ -445,7 +287,6 @@ func TestSnapshotManifestRejectsNonLocalFile(t *testing.T) {
 func TestSnapshotManifestRejectsDataFileNotInSnapshotFiles(t *testing.T) {
 	manifest, err := json.Marshal(sandboxAssetsRecord{
 		SandboxClass:      "gvisor",
-		PauseImage:        testPauseImage,
 		SnapshotFiles:     []string{"checkpoint.img"},
 		DataSnapshotFiles: []string{"data.tar"},
 	})
@@ -508,7 +349,7 @@ func TestUploadSnapshotRejectsSymlinkOutsideRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &recordingObjectStorage{}
-	err = newPluginHerder(t, store).uploadSnapshot(context.Background(), uri, checkpointDir,
+	err = newPluginHerder(t, store).uploadSnapshot(context.Background(), testActor, uri, checkpointDir,
 		&sandboxAssetsRecord{SnapshotFiles: []string{"checkpoint.img"}})
 	if err == nil {
 		t.Fatal("uploadSnapshot() followed a symlink outside the checkpoint directory")
@@ -541,41 +382,12 @@ func TestDownloadExternalCheckpointRejectsSymlinkOutsideRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := newPluginHerder(t, store).downloadExternalCheckpoint(
-		context.Background(), testSnapshotURI, restoreDir, []string{"checkpoint.img"})
+		context.Background(), testActor, testSnapshotURI, restoreDir, []string{"checkpoint.img"}, cacheModeOff)
 	if err == nil {
 		t.Fatal("downloadExternalCheckpoint() followed a symlink outside the restore directory")
 	}
 	if got, err := os.ReadFile(outside); err != nil || string(got) != "keep me" {
 		t.Fatalf("outside file = %q, %v; want unchanged", got, err)
-	}
-}
-
-func TestCopyLocalCheckpointRejectsSymlinkOutsideRoot(t *testing.T) {
-	parent := t.TempDir()
-	snapshotName := "pause-1"
-	snapshotDir := filepath.Join(parent, "local-checkpoint", snapshotName)
-	if err := os.MkdirAll(snapshotDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	outside := filepath.Join(parent, "outside")
-	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(snapshotDir, "checkpoint.img")); err != nil {
-		t.Fatal(err)
-	}
-	restoreDir := filepath.Join(parent, "restore-state")
-	if err := os.Mkdir(restoreDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	err := (&Atelet{}).copyLocalCheckpoint(context.Background(), parent, snapshotName,
-		filepath.Join(parent, "local-checkpoint"), restoreDir, []string{"checkpoint.img"})
-	if err == nil {
-		t.Fatal("copyLocalCheckpoint() followed a symlink outside the local checkpoint directory")
-	}
-	if _, err := os.Stat(filepath.Join(restoreDir, "checkpoint.img")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("restore file exists after rejected copy: %v", err)
 	}
 }
 
@@ -1061,34 +873,110 @@ func TestRemoveActorDirsReclaimsTheRoot(t *testing.T) {
 	useTempNodeDirs(t)
 	const actorUID = "actor-uid-1"
 
-	if err := resetActorDirs(actorUID); err != nil {
-		t.Fatalf("resetActorDirs: %v", err)
+	if err := actordirs.ResetActorDirs(actorUID); err != nil {
+		t.Fatalf("ResetActorDirs: %v", err)
 	}
 	// Written at Run and deliberately kept out of the directories reset wipes.
 	if err := os.WriteFile(ateletpath.ActorSandboxAssetsFile(actorUID), []byte("{}"), 0o600); err != nil {
 		t.Fatalf("writing sandbox assets file: %v", err)
 	}
 
-	if err := removeActorDirs(actorUID); err != nil {
-		t.Fatalf("removeActorDirs: %v", err)
+	if err := actordirs.RemoveActorDirs(actorUID); err != nil {
+		t.Fatalf("RemoveActorDirs: %v", err)
 	}
 
-	actorDir := ateletpath.ActorPath(actorUID)
-	if entries, err := os.ReadDir(actorDir); err == nil {
-		left := make([]string, 0, len(entries))
-		for _, e := range entries {
-			left = append(left, e.Name())
+	assertDirGone(t, "actor dir", ateletpath.ActorPath(actorUID))
+
+	assertDirGone(t, "actor snapshot dir", ateletpath.ActorSnapshotPath(actorUID))
+}
+
+// assertDirGone fails t if dir still exists, naming what is left in it.
+func assertDirGone(t *testing.T, what, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		t.Errorf("reading %s %s: %v", what, dir, err)
+		return
+	}
+	left := make([]string, 0, len(entries))
+	for _, e := range entries {
+		left = append(left, e.Name())
+	}
+	t.Errorf("%s %s survived with %d entries: %v", what, dir, len(left), left)
+}
+
+func TestResetActorDirsCreatesBothTrees(t *testing.T) {
+	useTempNodeDirs(t)
+	const actorUID = "actor-uid-isolation"
+
+	if err := actordirs.ResetActorDirs(actorUID); err != nil {
+		t.Fatalf("ResetActorDirs(%q) failed: %v", actorUID, err)
+	}
+	for root, dirs := range map[string]map[string]string{
+		ateletpath.ActorSnapshotPath(actorUID): {
+			"CheckpointStateDir": ateletpath.CheckpointStateDir(actorUID),
+			"RestoreStateDir":    ateletpath.RestoreStateDir(actorUID),
+		},
+		ateletpath.ActorPath(actorUID): {
+			"OCIBundleDir":              ateletpath.OCIBundleDir(actorUID),
+			"DurableDirVolumeMountsDir": ateletpath.DurableDirVolumeMountsDir(actorUID),
+			"SystemInfoVolumeRootsDir":  ateletpath.SystemInfoVolumeRootsDir(actorUID),
+			"ExternalVolumeMountsDir":   ateletpath.ExternalVolumeMountsDir(actorUID),
+		},
+	} {
+		for name, dir := range dirs {
+			if rel, err := filepath.Rel(root, dir); err != nil || !filepath.IsLocal(rel) {
+				t.Errorf("%s = %q, want it under %q", name, dir, root)
+			}
+			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+				t.Errorf("ResetActorDirs did not create %s (%q): err=%v", name, dir, err)
+			}
 		}
-		t.Errorf("actor dir %s survived removeActorDirs with %d entries: %v", actorDir, len(left), left)
-	} else if !os.IsNotExist(err) {
-		t.Errorf("reading actor dir %s: %v", actorDir, err)
+	}
+}
+
+func TestRemoveActorDirsKeepsActorDirWhenSnapshotTreeRemains(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions, so no snapshot can be made undeletable")
+	}
+	useTempNodeDirs(t)
+	const actorUID = "actor-uid-1"
+
+	if err := actordirs.ResetActorDirs(actorUID); err != nil {
+		t.Fatalf("ResetActorDirs(%q) failed: %v", actorUID, err)
+	}
+	record := ateletpath.ActorSandboxAssetsFile(actorUID)
+	if err := os.WriteFile(record, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A local snapshot dir with no write bit: its file cannot be unlinked.
+	stuck := ateletpath.LocalSnapshotDir(actorUID, "pause-stuck")
+	if err := os.MkdirAll(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stuck, "checkpoint.img"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+
+	if err := actordirs.RemoveActorDirs(actorUID); err == nil {
+		t.Fatal("RemoveActorDirs() = nil, want an error for the undeletable snapshot")
+	}
+	if _, err := os.Stat(record); err != nil {
+		t.Errorf("sandbox record %s is gone (err=%v), want it kept for a retried Terminate", record, err)
 	}
 }
 
 // TestRemoveActorDirsKeepsPopulatedVolume checks that removing the root does
-// not defeat the mount safety resetActorDirs provides: a volume directory with
-// contents means the unmount did not take, and deleting it would take the
-// mounted volume's data rather than the actor's.
+// not defeat the mount safety actordirs.ResetActorDirs provides: a volume
+// directory with contents means the unmount did not take, and deleting it would
+// take the mounted volume's data rather than the actor's.
 func TestRemoveActorDirsKeepsPopulatedVolume(t *testing.T) {
 	useTempNodeDirs(t)
 	const actorUID = "actor-uid-1"
@@ -1101,15 +989,15 @@ func TestRemoveActorDirsKeepsPopulatedVolume(t *testing.T) {
 		t.Fatalf("writing volume contents: %v", err)
 	}
 
-	err := removeActorDirs(actorUID)
+	err := actordirs.RemoveActorDirs(actorUID)
 	if err == nil {
-		t.Fatal("removeActorDirs succeeded with a populated volume dir, want an error")
+		t.Fatal("RemoveActorDirs succeeded with a populated volume dir, want an error")
 	}
 	if strings.Contains(err.Error(), "%w") {
-		t.Errorf("removeActorDirs error %q has a literal %%w", err)
+		t.Errorf("RemoveActorDirs error %q has a literal %%w", err)
 	}
 	if _, err := os.Stat(stillMounted); err != nil {
-		t.Errorf("removeActorDirs deleted the contents of a volume that was still populated: %v", err)
+		t.Errorf("RemoveActorDirs deleted the contents of a volume that was still populated: %v", err)
 	}
 }
 
@@ -1119,8 +1007,8 @@ func TestResetDir(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := resetDir("state dir", dir, os.RemoveAll, 0o750); err != nil {
-			t.Fatalf("resetDir: %v", err)
+		if err := actordirs.ResetDir("state dir", dir, os.RemoveAll, 0o750); err != nil {
+			t.Fatalf("ResetDir: %v", err)
 		}
 		entries, err := os.ReadDir(dir)
 		if err != nil || len(entries) != 0 {
@@ -1133,9 +1021,9 @@ func TestResetDir(t *testing.T) {
 
 	t.Run("names the directory when the remove fails", func(t *testing.T) {
 		boom := errors.New("boom")
-		err := resetDir("state dir", t.TempDir(), func(string) error { return boom }, 0o700)
+		err := actordirs.ResetDir("state dir", t.TempDir(), func(string) error { return boom }, 0o700)
 		if !errors.Is(err, boom) {
-			t.Fatalf("resetDir = %v, want it to wrap %v", err, boom)
+			t.Fatalf("ResetDir = %v, want it to wrap %v", err, boom)
 		}
 		if got, want := err.Error(), "while deleting state dir: boom"; got != want {
 			t.Errorf("error = %q, want %q", got, want)
@@ -1147,9 +1035,9 @@ func TestResetDir(t *testing.T) {
 		if err := os.WriteFile(file, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		err := resetDir("state dir", filepath.Join(file, "child"), func(string) error { return nil }, 0o700)
+		err := actordirs.ResetDir("state dir", filepath.Join(file, "child"), func(string) error { return nil }, 0o700)
 		if err == nil || !strings.HasPrefix(err.Error(), "while creating state dir: ") {
-			t.Errorf("resetDir = %v, want an error starting %q", err, "while creating state dir: ")
+			t.Errorf("ResetDir = %v, want an error starting %q", err, "while creating state dir: ")
 		}
 		if err != nil && strings.Contains(err.Error(), "%w") {
 			t.Errorf("error %q has a literal %%w", err)
@@ -1385,7 +1273,7 @@ func (r *recordingObjectStorage) keys() []string {
 	return keys
 }
 
-// writeLocalSnapshot lays a local pause snapshot out in dir: the given files
+// writeLocalSnapshot lays a node-local snapshot out in dir: the given files
 // plus the marshaled manifest beside them.
 func writeLocalSnapshot(t *testing.T, dir string, rec sandboxAssetsRecord, contents map[string]string) {
 	t.Helper()
@@ -1462,7 +1350,6 @@ func TestUploadLocalCheckpointDir(t *testing.T) {
 	fullRec := func(class string) sandboxAssetsRecord {
 		return sandboxAssetsRecord{
 			SandboxClass:      class,
-			PauseImage:        testPauseImage,
 			SnapshotFiles:     []string{"config.json", "memory-ranges", "data.tar"},
 			DataSnapshotFiles: []string{"data.tar"},
 			Fidelity:          ateattr.SnapshotFidelityMemory,
@@ -1513,7 +1400,6 @@ func TestUploadLocalCheckpointDir(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "pause-snap-1")
 		writeLocalSnapshot(t, dir, sandboxAssetsRecord{
 			SandboxClass:      "microvm",
-			PauseImage:        testPauseImage,
 			SnapshotFiles:     []string{"rootfs-upper-app.tar", "data.tar"},
 			DataSnapshotFiles: []string{"data.tar"},
 			Fidelity:          ateattr.SnapshotFidelityRootfs,
@@ -1577,7 +1463,6 @@ func TestUploadLocalCheckpointDir(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "pause-snap-1")
 		writeLocalSnapshot(t, dir, sandboxAssetsRecord{
 			SandboxClass:  "microvm",
-			PauseImage:    testPauseImage,
 			SnapshotFiles: []string{"data.tar"},
 		}, map[string]string{"data.tar": "data"})
 
@@ -1628,6 +1513,54 @@ func TestUploadLocalCheckpointDir(t *testing.T) {
 		_, _, err := s.uploadLocalCheckpointDir(ctx, validPromoteSnapshotRequest(), dir, uri)
 		if err == nil {
 			t.Fatal("uploadLocalCheckpointDir succeeded, want error")
+		}
+	})
+
+	t.Run("earlier boot already uploaded skips upload", func(t *testing.T) {
+		store := &recordingObjectStorage{
+			objects: map[string][]byte{
+				pausedSnapshotPath + "/manifest.json": []byte(`{"sandboxClass":"microvm"}`),
+			},
+			putErr: errors.New("must not upload a local copy from before the node rebooted"),
+		}
+		s := newPluginHerder(t, store)
+		s.bootID = "boot-2"
+		dir := filepath.Join(t.TempDir(), "pause-snap-1")
+		rec := fullRec("microvm")
+		rec.BootID = "boot-1"
+		writeLocalSnapshot(t, dir, rec, map[string]string{
+			"config.json": "cfg", "memory-ranges": "", "data.tar": "data",
+		})
+
+		_, uploaded, err := s.uploadLocalCheckpointDir(ctx, validPromoteSnapshotRequest(), dir, uri)
+		if err != nil {
+			t.Fatalf("uploadLocalCheckpointDir: %v", err)
+		}
+		if uploaded {
+			t.Error("uploaded = true, want false when the remote manifest already exists")
+		}
+	})
+
+	t.Run("earlier boot not uploaded is NotFound", func(t *testing.T) {
+		store := &recordingObjectStorage{}
+		s := newPluginHerder(t, store)
+		s.bootID = "boot-2"
+		dir := filepath.Join(t.TempDir(), "pause-snap-1")
+		rec := fullRec("microvm")
+		rec.BootID = "boot-1"
+		writeLocalSnapshot(t, dir, rec, map[string]string{
+			"config.json": "cfg", "memory-ranges": "mem", "data.tar": "data",
+		})
+
+		_, uploaded, err := s.uploadLocalCheckpointDir(ctx, validPromoteSnapshotRequest(), dir, uri)
+		if uploaded {
+			t.Error("uploaded = true, want false")
+		}
+		if got := apierror.Code(err); got != codes.NotFound {
+			t.Fatalf("code = %v (err %v), want NotFound", got, err)
+		}
+		if len(store.keys()) != 0 {
+			t.Errorf("objects uploaded for a local copy from before the node rebooted: %v", store.keys())
 		}
 	})
 }

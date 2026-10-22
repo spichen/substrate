@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -407,8 +408,12 @@ func TestDetachDurationOutcomes(t *testing.T) {
 		ref := testRef("s1", 1, tr.clock.Now())
 		tr.CommitDurable(trackedActorUID, ref)
 		tr.CommitLocal(trackedActorUID, ref)
-		// A file where the local checkpoint directory belongs fails the prune.
-		if err := os.WriteFile(ateletpath.LocalCheckpointsDir(trackedActorUID), nil, 0o600); err != nil {
+		// A populated volume mount directory fails RemoveActorFilesExceptState.
+		stillMounted := filepath.Join(ateletpath.ExternalVolumeHostPath(trackedActorUID, "data"), "payload")
+		if err := os.MkdirAll(filepath.Dir(stillMounted), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(stillMounted, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		stepTo(tr, detachDueOf(tr, trackedActorUID))
@@ -421,20 +426,29 @@ func TestDetachDurationOutcomes(t *testing.T) {
 	t.Run("canceled", func(t *testing.T) {
 		inst, reader := newTestInstruments(t)
 		store := newFakeSnapshotStore()
+		store.setBlocking(true)
+		store.setIgnoreCancel(true)
 		useActorDir(t)
 		tr := newStoreTracker(t, store, WithInstruments(inst))
-		ref := testRef("s1", 1, tr.clock.Now())
-		tr.CommitDurable(trackedActorUID, ref)
-		tr.CommitLocal(trackedActorUID, ref)
+		tr.CommitLocal(trackedActorUID, testRef("s1", 1, tr.clock.Now()))
 		stepTo(tr, detachDueOf(tr, trackedActorUID))
 		run := tr.beginDueWork(trackedActorUID, opDetach)
 		if run == nil {
 			t.Fatal("beginDueWork returned nil, want due detach")
 		}
-		if err := tr.Forget(trackedActorUID); err != nil {
-			t.Fatalf("Forget: %v", err)
-		}
-		run()
+		go run()
+		waitStarted(t, store)
+		// Forget cancels the detach as its upload finishes, and waits for it
+		// to end.
+		forgetDone := make(chan error, 1)
+		go func() { forgetDone <- tr.Forget(trackedActorUID) }()
+		waitCanceled(t, store)
+		store.release <- nil
+		returnsPromptly(t, "Forget", func() {
+			if err := <-forgetDone; err != nil {
+				t.Errorf("Forget: %v", err)
+			}
+		})
 		if got, want := errorTypesOf(t, reader, detachDurationMetric), []string{codes.Canceled.String()}; !slices.Equal(got, want) {
 			t.Errorf("error types = %v, want %v", got, want)
 		}

@@ -50,11 +50,6 @@ const (
 	// the podcertificate controller's API rate limits to match.
 	ClusterSizeSize0  = "size0"
 	ClusterSizeSize10 = "size10"
-
-	// Ingress router authentication modes; see atenet router's
-	// --ingress-auth-mode.
-	IngressAuthDeprecatedInsecure = "deprecated-insecure"
-	IngressAuthStaticMTLS         = "static-mtls"
 )
 
 // DefaultRolloutTimeout is the default wait timeout for workload rollouts.
@@ -122,9 +117,6 @@ type Config struct {
 	// follows neither form.
 	ExpectedJWTIssuer string
 
-	// APIExperimentalEnableAuthz turns on ate-api-server's runtime
-	// authorization (ATE_API_EXPERIMENTAL_ENABLE_AUTHZ).
-	APIExperimentalEnableAuthz bool
 	// APIAuthzBootstrapOwners is the comma-separated principal list granted
 	// owner on global:root (ATE_API_AUTHZ_BOOTSTRAP_OWNERS).
 	APIAuthzBootstrapOwners string
@@ -146,6 +138,11 @@ type Config struct {
 	// preview gate is enabled, which also lets a
 	// template's snapshotConfig.storageLocation override it.
 	SnapshotLocation string
+
+	// TransferGSAName is the name of the Google service account snapshot
+	// transfers run as on GCS, in ProjectID (SNAPSHOT_TRANSFER_GSA_NAME).
+	// Only the in-tree GCS backend uses it. See TransferServiceAccount.
+	TransferGSAName string
 
 	// KODockerRepo is where ko pushes images (KO_DOCKER_REPO).
 	KODockerRepo string
@@ -218,11 +215,6 @@ type Config struct {
 	// (ATE_INSTALL_FAKE_DATA_PLANE), for control-plane benchmarks.
 	FakeDataPlane bool
 
-	// IngressAuthMode is how the ingress router authenticates its clients
-	// (ATE_INGRESS_AUTH_MODE): IngressAuthDeprecatedInsecure or
-	// IngressAuthStaticMTLS.
-	IngressAuthMode string
-
 	// IngressAllowedSPIFFEIDs are the SPIFFE IDs the ingress router lets
 	// reach actors over its TLS listeners (ATE_INGRESS_ALLOWED_SPIFFE_IDS).
 	// See RequireIngressAllowedSPIFFEIDs.
@@ -294,6 +286,33 @@ func (c *Config) RequireIngressAllowedSPIFFEIDs() error {
 		return nil
 	}
 	return c.Resolved().Require("ingressAllowedSPIFFEIDs")
+}
+
+// TransferServiceAccount is the email of the snapshot transfer service
+// account, built from TransferGSAName and ProjectID as tools/setup-gcp builds
+// it. It is empty when either is.
+func (c *Config) TransferServiceAccount() string {
+	if c.TransferGSAName == "" || c.ProjectID == "" {
+		return ""
+	}
+	return c.TransferGSAName + "@" + c.ProjectID + ".iam.gserviceaccount.com"
+}
+
+// RequireTransferServiceAccount fails when the install would deploy
+// ate-api-server on GCS without a transfer service account. Its credential
+// exchange impersonates the account and refuses to start without one.
+// ate-setup installs GCS everywhere but kind, which uses S3.
+func (c *Config) RequireTransferServiceAccount() error {
+	if c.Kind {
+		return nil
+	}
+	if c.TransferGSAName == "" {
+		return c.Resolved().Require("storage.transferGSAName")
+	}
+	if c.ProjectID == "" {
+		return c.Resolved().Require("gcp.projectID")
+	}
+	return nil
 }
 
 // SetResolved attaches resolved settings to a Config built directly. Load
@@ -496,10 +515,6 @@ func (c *Config) ScriptEnv() []string {
 	delete(merged, "ATE_INSTALL_FAKE_DATA_PLANE")
 	if c.FakeDataPlane {
 		merged["ATE_INSTALL_FAKE_DATA_PLANE"] = "true"
-	}
-	delete(merged, "ATE_INGRESS_AUTH_MODE")
-	if c.IngressAuthMode != "" && c.IngressAuthMode != IngressAuthDeprecatedInsecure {
-		merged["ATE_INGRESS_AUTH_MODE"] = c.IngressAuthMode
 	}
 	delete(merged, "ATE_INGRESS_ALLOWED_SPIFFE_IDS")
 	if len(c.IngressAllowedSPIFFEIDs) > 0 {
