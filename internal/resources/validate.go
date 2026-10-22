@@ -424,35 +424,6 @@ func ValidateMountPath(fldPath *field.Path, p string) field.ErrorList {
 	return nil
 }
 
-// ValidateNestedMountPaths rejects mount paths that nest under or over one
-// another: volumes cannot mount onto other volumes. paths[i] is reported at
-// fldPath[i].mount_path. Identical paths are left to the list-key uniqueness
-// check.
-func ValidateNestedMountPaths(fldPath *field.Path, paths []string) field.ErrorList {
-	return ValidateNestedMountPathsAt(paths, func(i int) *field.Path { return fldPath.Index(i).Child("mount_path") })
-}
-
-// ValidateNestedMountPathsAt is ValidateNestedMountPaths for paths gathered
-// from more than one list: at(i) is where paths[i] is reported.
-func ValidateNestedMountPathsAt(paths []string, at func(i int) *field.Path) field.ErrorList {
-	var errs field.ErrorList
-	for i, path := range paths {
-		if path == "" {
-			continue
-		}
-		for _, prior := range paths[:i] {
-			if prior == "" || prior == path {
-				continue
-			}
-			if strings.HasPrefix(path, prior+"/") || strings.HasPrefix(prior, path+"/") {
-				errs = append(errs, field.Invalid(at(i), path,
-					fmt.Sprintf("must not nest under or over another mount (%q)", prior)))
-			}
-		}
-	}
-	return errs
-}
-
 // httpGetPathRE constrains wakeup probe paths to RFC 3986 path-segment
 // characters only, with well-formed percent-escapes, and no query string
 // or fragment.

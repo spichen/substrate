@@ -3720,13 +3720,13 @@ type Container struct {
 	// +k8s:optional
 	WakeupProbe *WakeupProbe `protobuf:"bytes,6,opt,name=wakeup_probe,json=wakeupProbe,proto3" json:"wakeup_probe,omitempty"`
 	// Keyed by mount_path: each path hosts exactly one mount, while a volume
-	// may be mounted at multiple paths.
+	// may be mounted at multiple paths. A mount may nest under another: the
+	// parent is mounted first and the child's mount point is created in it.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=32
 	// +k8s:listType=map
 	// +k8s:listMapKey=mount_path
-	// +k8s:customValidation # mounts must not nest
 	VolumeMounts []*VolumeMount `protobuf:"bytes,7,rep,name=volume_mounts,json=volumeMounts,proto3" json:"volume_mounts,omitempty"`
 	// security_context adjusts the container's security settings. Unset leaves
 	// the default capability set.

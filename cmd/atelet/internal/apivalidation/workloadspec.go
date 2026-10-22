@@ -67,16 +67,6 @@ func ValidateCustom_VolumeMount_MountPath(_ context.Context, _ operation.Operati
 	return resources.ValidateMountPath(fldPath, *value)
 }
 
-// ValidateCustom_Container_VolumeMounts rejects nested mounts. Mount-path
-// uniqueness is enforced by the list key.
-func ValidateCustom_Container_VolumeMounts(_ context.Context, _ operation.Operation, fldPath *field.Path, value, _ []*ateletpb.VolumeMount) field.ErrorList {
-	paths := make([]string, len(value))
-	for i, m := range value {
-		paths[i] = m.GetMountPath()
-	}
-	return resources.ValidateNestedMountPaths(fldPath, paths)
-}
-
 func ValidateCustom_Capabilities_Add(_ context.Context, _ operation.Operation, fldPath *field.Path, value, _ []string) field.ErrorList {
 	return resources.ValidateCapabilities(fldPath, value, false)
 }
