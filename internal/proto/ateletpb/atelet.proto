@@ -779,10 +779,9 @@ message Container {
   // may be mounted at multiple paths.
   //
   // +k8s:optional
-  // +k8s:maxItems=32 # matches the template's volume_mounts bound
+  // +k8s:maxItems=96 # the template's 32 volume_mounts plus the actor's 64
   // +k8s:listType=map
   // +k8s:listMapKey=mount_path
-  // +k8s:customValidation # mounts must not nest
   repeated VolumeMount volume_mounts = 6;
 
   // +k8s:optional

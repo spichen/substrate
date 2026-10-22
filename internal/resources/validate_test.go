@@ -603,48 +603,6 @@ func TestValidateCapabilities(t *testing.T) {
 	}
 }
 
-func TestValidateNestedMountPaths(t *testing.T) {
-	path := field.NewPath("volume_mounts")
-	tests := []struct {
-		name  string
-		paths []string
-		want  field.ErrorList
-	}{
-		{name: "siblings", paths: []string{"/a", "/b", "/ab"}},
-		{name: "identical paths are left to the list key", paths: []string{"/a", "/a"}},
-		{name: "empty paths are skipped", paths: []string{"", "/a"}},
-		{
-			name:  "nested under an earlier mount",
-			paths: []string{"/a", "/a/b"},
-			want:  field.ErrorList{field.Invalid(path.Index(1).Child("mount_path"), nil, "")},
-		},
-		{
-			name:  "nested over an earlier mount",
-			paths: []string{"/a/b", "/a"},
-			want:  field.ErrorList{field.Invalid(path.Index(1).Child("mount_path"), nil, "")},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			field.ErrorMatcher{}.ByType().ByField().Test(t, tt.want, ValidateNestedMountPaths(path, tt.paths))
-		})
-	}
-}
-
-// TestValidateNestedMountPathsAt pins that each finding lands on the field
-// the caller maps its index to, which is how a caller spanning several lists
-// points at the right one.
-func TestValidateNestedMountPathsAt(t *testing.T) {
-	fields := []*field.Path{
-		field.NewPath("external_volume_mounts").Index(0).Child("mount_path"),
-		field.NewPath("image_volume_mounts").Index(0).Child("mount_path"),
-		field.NewPath("image_volume_mounts").Index(1).Child("mount_path"),
-	}
-	got := ValidateNestedMountPathsAt([]string{"/a", "/b", "/a/c"}, func(i int) *field.Path { return fields[i] })
-	want := field.ErrorList{field.Invalid(fields[2], nil, "")}
-	field.ErrorMatcher{}.ByType().ByField().Test(t, want, got)
-}
-
 func TestValidateCSIMap(t *testing.T) {
 	path := field.NewPath("publish_context")
 	many := make(map[string]string, 100)

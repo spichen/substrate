@@ -152,6 +152,18 @@ func workloadSpecFromActorTemplate(actorTemplate *ateapipb.ActorTemplate, actor 
 				SubPath:   actorMountSubPath(mount, actor, actorTemplate),
 			})
 		}
+		for _, actorMount := range actor.GetVolumeMounts() {
+			if actorMount.GetContainer() != ctr.GetName() {
+				continue
+			}
+			mount := actorMount.GetVolumeMount()
+			ateletCtr.VolumeMounts = append(ateletCtr.VolumeMounts, &ateletpb.VolumeMount{
+				Name:      mount.GetName(),
+				MountPath: mount.GetMountPath(),
+				ReadOnly:  mount.GetReadOnly(),
+				SubPath:   actorMountSubPath(mount, actor, actorTemplate),
+			})
+		}
 		workloadSpec.Containers = append(workloadSpec.Containers, ateletCtr)
 	}
 
@@ -168,7 +180,7 @@ func appendExternalVolumes(workloadSpec *ateletpb.WorkloadSpec, template *ateapi
 	}
 	for _, vol := range template.GetVolumes() {
 		if vol.GetExternal().GetTemplate() != nil || vol.GetExternal().GetSharedVolume() != nil {
-			if !isVolumeMounted(vol.GetName(), template) {
+			if !isVolumeMounted(vol.GetName(), template) && !isVolumeMountedByActor(vol.GetName(), actor) {
 				continue
 			}
 			if vol.GetExternal().GetSharedVolume() != nil && isGoldenActor(actor, template) && !goldenMountsSharedVolumes(template) {
@@ -239,6 +251,15 @@ func isVolumeMountedWritable(volumeName string, template *ateapipb.ActorTemplate
 			if mount.GetName() == volumeName && !mount.GetReadOnly() {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func isVolumeMountedByActor(volumeName string, actor *ateapipb.Actor) bool {
+	for _, actorMount := range actor.GetVolumeMounts() {
+		if actorMount.GetVolumeMount().GetName() == volumeName {
+			return true
 		}
 	}
 	return false

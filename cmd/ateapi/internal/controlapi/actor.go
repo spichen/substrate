@@ -103,6 +103,9 @@ func (s *ServiceImpl) CreateActor(ctx context.Context, inActor *ateapipb.Actor) 
 				return nil, apierror.FailedPrecondition("Tag cloning does not support ActorTemplates that reference a SharedVolume")
 			}
 		}
+	case len(inActor.GetVolumeMounts()) > 0:
+		// The golden was taken over the template's mounts only, and runsc
+		// refuses a restore over a different mount table.
 	case templateHasSharedVolumeRef(template) && !goldenMountsSharedVolumes(template):
 		// A golden taken over placeholders cannot be restored over the real
 		// volumes: runsc refuses a restore whose mount options differ from the
@@ -140,6 +143,9 @@ func (s *ServiceImpl) CreateActor(ctx context.Context, inActor *ateapipb.Actor) 
 			return nil, err
 		}
 		initVols = append(initVols, refVols...)
+		if err := validateActorVolumeMounts(inActor, template); err != nil {
+			return nil, err
+		}
 	}
 
 	// Verify that the result is properly valid before storing it.
@@ -354,6 +360,23 @@ func (s *ServiceImpl) UpdateActor(ctx context.Context, actorRef resources.ActorR
 				// The old template is gone, so there is nothing left to
 				// compare the volume layout against.
 			default:
+				return err
+			}
+		}
+
+		// Mounts change only while the actor is suspended: a running sandbox
+		// keeps the mount table it started with. The next resume restores
+		// volumes only, which mountsChangedSince decides from the snapshot.
+		if volumeMountsDigest(oldVal) != volumeMountsDigest(newVal) {
+			if state := oldVal.GetStatus().GetState(); state != ateapipb.ActorState_ACTOR_STATE_SUSPENDED {
+				return apierror.FailedPrecondition(
+					"actor must be %s to change its volume mounts (got: %s)", ateapipb.ActorState_ACTOR_STATE_SUSPENDED, state)
+			}
+			template, err := resolveActorTemplate(ctx, s.store, newVal)
+			if err != nil {
+				return err
+			}
+			if err := validateActorVolumeMounts(newVal, template); err != nil {
 				return err
 			}
 		}

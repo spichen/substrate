@@ -406,6 +406,46 @@ func Validate_Actor(
 		errs = append(errs, fn(fldPath.Child("shared_volume_sub_paths"), obj.SharedVolumeSubPaths, oldVal, oldObj != nil)...)
 	}
 
+	{ // field ateapipb.Actor.VolumeMounts
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj []*ateapipb.ActorVolumeMount,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if ateDeepEqual(obj, oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.PtrSliceNoNils[ateapipb.ActorVolumeMount](ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if e := validate.MaxItems(ctx, op, fldPath, obj, oldObj, 64).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if e := validate.OptionalSlice(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			// iterate the list and call the type's validation function
+			if e := validate.EachPtrSliceVal(ctx, op, fldPath, obj, oldObj, nil, nil, Validate_ActorVolumeMount); len(e) != 0 {
+				errs = append(errs, e...)
+			}
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.Actor) []*ateapipb.ActorVolumeMount {
+				return oldObj.VolumeMounts
+			})
+		errs = append(errs, fn(fldPath.Child("volume_mounts"), obj.VolumeMounts, oldVal, oldObj != nil)...)
+	}
+
 	return errs
 }
 
@@ -1527,6 +1567,78 @@ func Validate_ActorTemplateStatus(
 	return errs
 }
 
+// Validate_ActorVolumeMount validates an instance of ActorVolumeMount according
+// to declarative validation rules in the API schema.
+func Validate_ActorVolumeMount(
+	ctx context.Context, op operation.Operation, fldPath *field.Path,
+	obj, oldObj *ateapipb.ActorVolumeMount) (errs field.ErrorList) {
+
+	{ // field ateapipb.ActorVolumeMount.Container
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *string,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.RequiredValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			if e := validate.ShortName(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
+				errs = append(errs, e...)
+			}
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ActorVolumeMount) *string {
+				return &oldObj.Container
+			})
+		errs = append(errs, fn(fldPath.Child("container"), &obj.Container, oldVal, oldObj != nil)...)
+	}
+
+	{ // field ateapipb.ActorVolumeMount.VolumeMount
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *ateapipb.VolumeMount,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if ateDeepEqual(obj, oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.RequiredPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			// call the type's validation function
+			errs = append(errs, Validate_VolumeMount(ctx, op, fldPath, obj, oldObj)...)
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ActorVolumeMount) *ateapipb.VolumeMount {
+				return oldObj.VolumeMount
+			})
+		errs = append(errs, fn(fldPath.Child("volume_mount"), obj.VolumeMount, oldVal, oldObj != nil)...)
+	}
+
+	return errs
+}
+
 // Validate_Atespace validates an instance of Atespace according
 // to declarative validation rules in the API schema.
 func Validate_Atespace(
@@ -2088,10 +2200,6 @@ func Validate_Container(
 			}
 			if earlyReturn {
 				return // do not proceed
-			}
-			// custom validation
-			if e := ValidateCustom_Container_VolumeMounts(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
-				errs = append(errs, e...)
 			}
 			// lists with map semantics require unique keys
 			if e := validate.PtrSliceUnique(ctx, op, fldPath, obj, oldObj,
@@ -8808,6 +8916,34 @@ func Validate_Snapshot(
 				return oldObj.SandboxRuntime
 			})
 		errs = append(errs, fn(fldPath.Child("sandbox_runtime"), obj.SandboxRuntime, oldVal, oldObj != nil)...)
+	}
+
+	{ // field ateapipb.Snapshot.VolumeMountsDigest
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *string,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.OptionalValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.Snapshot) *string {
+				return &oldObj.VolumeMountsDigest
+			})
+		errs = append(errs, fn(fldPath.Child("volume_mounts_digest"), &obj.VolumeMountsDigest, oldVal, oldObj != nil)...)
 	}
 
 	return errs

@@ -177,7 +177,7 @@ func (w *ActorWorkflow) loadActorForResume(ctx context.Context, actorRef resourc
 		src.Generation = snap.GetGeneration()
 		src.Fidelity = snap.GetFidelity()
 		capturedUnder := snap.GetActorTemplateUid()
-		src.TemplateReplaced = capturedUnder != "" && capturedUnder != actorTemplate.GetMetadata().GetUid()
+		src.TemplateReplaced = (capturedUnder != "" && capturedUnder != actorTemplate.GetMetadata().GetUid()) || mountsChangedSince(snap, actor)
 	}
 
 	return actor, actorTemplate, src, nil
@@ -706,13 +706,13 @@ func snapshotSandboxClass(actor *ateapipb.Actor) string {
 // MEMORY needs a runtime match. Until then ROOTFS is pinned like MEMORY.
 func requiredSnapshotRuntime(actor *ateapipb.Actor, tmpl *ateapipb.ActorTemplate) *ateapipb.SandboxRuntime {
 	if localSnap := findLatestLocalSnapshot(actor.GetStatus()); localSnap != nil {
-		if localSnap.GetFidelity() == ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES {
+		if localSnap.GetFidelity() == ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES || mountsChangedSince(localSnap, actor) {
 			return nil
 		}
 		return localSnap.GetSandboxRuntime()
 	}
 	if snap := findLatestDurableSnapshot(actor.GetStatus(), ateapipb.SnapshotStorageStatus_SNAPSHOT_STORAGE_STATUS_COMPLETED); snap != nil {
-		if snap.GetFidelity() == ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES {
+		if snap.GetFidelity() == ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES || mountsChangedSince(snap, actor) {
 			return nil
 		}
 		capturedUnder := snap.GetActorTemplateUid()
@@ -833,6 +833,9 @@ func (w *ActorWorkflow) ensureAteletRestored(ctx context.Context, actorRef resou
 		tele.SnapshotKind = ateattr.SnapshotKindLocal
 
 		fidelity := fidelityToAtelet(localSnap.GetFidelity())
+		if mountsChangedSince(localSnap, actor) {
+			fidelity = ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES
+		}
 		req := &ateletpb.RestoreRequest{
 			WorkerPodUid:          assignment.GetWorkerPodUid(),
 			Atespace:              actor.GetMetadata().GetAtespace(),

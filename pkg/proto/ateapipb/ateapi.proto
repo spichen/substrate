@@ -400,6 +400,13 @@ message Snapshot {
   //
   // +k8s:optional
   SandboxRuntime sandbox_runtime = 8;
+
+  // volume_mounts_digest identifies the actor's volume_mounts when the
+  // snapshot was taken. A resume whose actor's mounts differ restores volumes
+  // only. Empty for an actor without volume_mounts.
+  //
+  // +k8s:optional
+  string volume_mounts_digest = 9;
 }
 
 // SnapshotFidelity orders the state layers a snapshot can hold, lowest to
@@ -627,6 +634,37 @@ message Actor {
   // +k8s:eachKey=+k8s:format=k8s-short-name
   // +k8s:immutable
   map<string, string> shared_volume_sub_paths = 9;
+
+  // volume_mounts adds mounts of the template's external.shared_volume
+  // volumes to this actor's containers, on top of the template's own mounts.
+  // Each mount follows the VolumeMount rules and resolves its sub_path beneath
+  // shared_volume_sub_paths when the actor sets a root for that volume. A
+  // mount may nest under another mount of the same container.
+  //
+  // They can change only while the actor is suspended. The next resume after
+  // a change restores the actor's volumes but not its memory or root
+  // filesystem, since runsc cannot restore a checkpoint over a different set
+  // of mounts. An actor with volume_mounts never starts from its template's
+  // golden snapshot.
+  //
+  // +k8s:optional
+  // +k8s:maxItems=64
+  repeated ActorVolumeMount volume_mounts = 10;
+}
+
+// ActorVolumeMount mounts a volume of the actor's template into one of the
+// template's containers.
+message ActorVolumeMount {
+  // container is the name of a container in the template.
+  //
+  // +k8s:required
+  // +k8s:format=k8s-short-name
+  string container = 1;
+
+  // volume_mount names an external.shared_volume of the template.
+  //
+  // +k8s:required
+  VolumeMount volume_mount = 2;
 }
 
 // EgressPolicy is an egress policy resource nested under an Actor. An Actor has
@@ -1555,13 +1593,13 @@ message Container {
   WakeupProbe wakeup_probe = 6;
 
   // Keyed by mount_path: each path hosts exactly one mount, while a volume
-  // may be mounted at multiple paths.
+  // may be mounted at multiple paths. A mount may nest under another: the
+  // parent is mounted first and the child's mount point is created in it.
   //
   // +k8s:optional
   // +k8s:maxItems=32
   // +k8s:listType=map
   // +k8s:listMapKey=mount_path
-  // +k8s:customValidation # mounts must not nest
   repeated VolumeMount volume_mounts = 7;
 
   // security_context adjusts the container's security settings. Unset leaves

@@ -91,6 +91,43 @@ func TestBuild_VolumeMounts(t *testing.T) {
 	}
 }
 
+// A mount nested under another is bound after it, whatever order the lists
+// give, and keeps the sub-path staging directory of its own position.
+func TestBuild_NestedMountsBindParentFirst(t *testing.T) {
+	const bundles = "/node/actors/a/bundles"
+	spec := Build(Options{
+		ActorDirs: &ateworkerpb.ActorDirs{
+			OciBundleDir:            bundles,
+			ExternalVolumeMountsDir: "/node/actors/a/volumes",
+		},
+		Container: &ateworkerpb.Container{
+			Name:          "app",
+			ContainerSpec: &ateworkerpb.ContainerSpec{Args: []string{"/app"}},
+			ExternalVolumeMounts: []*ateworkerpb.VolumeMount{
+				{Name: "session", MountPath: "/app/history", SubPath: "s1/history", ReadOnly: true},
+				{Name: "skills", MountPath: "/app/skills/pdf", SubPath: "global/pdf", ReadOnly: true},
+				{Name: "session", MountPath: "/app", SubPath: "s1"},
+			},
+		},
+	})
+
+	var order []string
+	for _, m := range spec.Mounts {
+		if m.Type == "bind" {
+			order = append(order, m.Destination)
+		}
+	}
+	if want := []string{"/app", "/app/history", "/app/skills/pdf"}; !slices.Equal(order, want) {
+		t.Fatalf("bind order = %v, want %v", order, want)
+	}
+	if got, want := mountFor(t, spec, "/app/history").Source, filepath.Join(bundles, "app", SubPathDir, "0"); got != want {
+		t.Errorf("/app/history source = %q, want %q", got, want)
+	}
+	if got, want := mountFor(t, spec, "/app").Source, filepath.Join(bundles, "app", SubPathDir, "2"); got != want {
+		t.Errorf("/app source = %q, want %q", got, want)
+	}
+}
+
 // The container joins the network namespace worker creates for the actor.
 func TestBuild_JoinsTheActorNetNS(t *testing.T) {
 	spec := Build(Options{ActorUID: "uid-a", Container: &ateworkerpb.Container{ContainerSpec: &ateworkerpb.ContainerSpec{Args: []string{"/app"}}}})

@@ -19,6 +19,7 @@ import (
 	"slices"
 	"testing"
 
+	"go.ate.dev/substrate/internal/proto/ateletpb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc/codes"
@@ -280,5 +281,78 @@ func TestSharedVolumeRef_GoldenOverSharedVolumesValidation(t *testing.T) {
 			}})
 			assertGrpcErrorRegex(t, err, codes.InvalidArgument, tt.want)
 		})
+	}
+}
+
+func TestActorVolumeMounts_RestoreVolumesOnlyAfterAChange(t *testing.T) {
+	ns := namespaceForTest("ns-extvol-actor-mounts")
+	tc, _ := setupSharedVolumeTest(t, ns)
+	defer tc.cleanup()
+
+	createSharedVolume(t, tc, "shared", ateapipb.DeleteTrigger_DELETE_TRIGGER_MANUAL)
+	createTemplateWithVolumes(t, tc, ns,
+		[]*ateapipb.Volume{{Name: "work", External: &ateapipb.ExternalVolumeSource{SharedVolume: &ateapipb.SharedVolumeRef{Name: "shared"}}}},
+		[]*ateapipb.VolumeMount{{Name: "work", MountPath: "/mnt/work"}})
+	workerName := createWorkerPod(t, tc, ns, "worker-1", "node1", "pool1")
+	ctx := context.Background()
+	ref := &ateapipb.ObjectRef{Atespace: testAtespace, Name: "mounted"}
+	history := &ateapipb.ActorVolumeMount{Container: "main", VolumeMount: &ateapipb.VolumeMount{Name: "work", MountPath: "/mnt/work/history", SubPath: "history", ReadOnly: true}}
+
+	if _, err := tc.client.CreateActor(ctx, &ateapipb.CreateActorRequest{Actor: &ateapipb.Actor{
+		Metadata:      &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: "mounted"},
+		ActorTemplate: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "tmpl1"},
+		VolumeMounts:  []*ateapipb.ActorVolumeMount{history},
+	}}); err != nil {
+		t.Fatalf("CreateActor failed: %v", err)
+	}
+	if snaps := getActor(t, tc, "mounted").GetStatus().GetSnapshots(); len(snaps) != 0 {
+		t.Fatalf("actor with its own mounts carries snapshots %v, want none: the golden was taken over other mounts", snaps)
+	}
+
+	waitForWorkerAvailable(t, tc, workerName)
+	resetAteletCalls(tc)
+	if _, err := tc.client.ResumeActor(ctx, &ateapipb.ResumeActorRequest{Actor: ref}); err != nil {
+		t.Fatalf("ResumeActor failed: %v", err)
+	}
+	var paths []string
+	for _, mount := range tc.fakeAtelet.lastRunRequest().GetSpec().GetContainers()[0].GetVolumeMounts() {
+		paths = append(paths, mount.GetMountPath())
+	}
+	if want := []string{"/mnt/work", "/mnt/work/history"}; !slices.Equal(paths, want) {
+		t.Fatalf("run mounts = %v, want %v", paths, want)
+	}
+
+	update := func() error {
+		actor := getActor(t, tc, "mounted")
+		actor.VolumeMounts = []*ateapipb.ActorVolumeMount{history, {Container: "main", VolumeMount: &ateapipb.VolumeMount{Name: "work", MountPath: "/mnt/work/skills", SubPath: "skills", ReadOnly: true}}}
+		_, err := tc.client.UpdateActor(ctx, &ateapipb.UpdateActorRequest{Actor: actor})
+		return err
+	}
+	assertGrpcErrorRegex(t, update(), codes.FailedPrecondition, "to change its volume mounts")
+
+	if _, err := tc.client.SuspendActor(ctx, &ateapipb.SuspendActorRequest{
+		Actor:   ref,
+		Options: &ateapipb.SuspendOptions{Mode: ateapipb.DurabilityMode_DURABILITY_MODE_SYNCHRONOUS},
+	}); err != nil {
+		t.Fatalf("SuspendActor failed: %v", err)
+	}
+	if err := update(); err != nil {
+		t.Fatalf("UpdateActor while suspended failed: %v", err)
+	}
+
+	waitForWorkerAvailable(t, tc, workerName)
+	resetAteletCalls(tc)
+	if _, err := tc.client.ResumeActor(ctx, &ateapipb.ResumeActorRequest{Actor: ref}); err != nil {
+		t.Fatalf("ResumeActor after the change failed: %v", err)
+	}
+	run, restore := ateletCalls(tc)
+	if run {
+		t.Fatal("resume after a mount change cold-booted without the actor's volumes")
+	}
+	if !restore {
+		t.Fatal("resume after a mount change did not restore the actor's volumes")
+	}
+	if got := tc.fakeAtelet.lastRestoreRequest().GetSnapshot().GetFidelity(); got != ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES {
+		t.Errorf("restore fidelity after a mount change = %v, want volumes only", got)
 	}
 }

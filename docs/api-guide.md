@@ -268,7 +268,7 @@ root. Otherwise it must be a clean relative Unix path of at most 16 segments,
 with no empty, `.` or `..` segment and no NUL. Symlinks in the selected path are
 rejected by the workers.
 
-The same volume can appear at several distinct, non-nested `mountPath` values:
+The same volume can appear at several distinct `mountPath` values, and a mount can nest under another: the parent is mounted first and the child's mount point is created in it, so the parent must be writable or already contain that directory.
 
 ```yaml
 volumeMounts:
@@ -320,6 +320,28 @@ The directory follows the `subPath` rules, as does its join with each mount's
 Volumes without an entry keep the template's `subPath`, and the golden actor
 ignores the field. `kubectl ate create actor --volume-sub-path session=tenant-a/session-1`
 sets it.
+
+An actor can also add mounts of the template's `external.sharedVolume` volumes
+to its containers with `volumeMounts`. Each entry names a container and takes
+an ordinary `VolumeMount`, resolved beneath the actor's root for that volume
+like the template's own mounts:
+
+```yaml
+# Actor
+sharedVolumeSubPaths: {session: tenant-a/session-1}
+volumeMounts:
+  - container: main
+    volumeMount: {name: session, mountPath: /workspace/history, subPath: history, readOnly: true}
+  - container: main
+    volumeMount: {name: skills, mountPath: /workspace/skills/pdf, subPath: global/pdf, readOnly: true}
+```
+
+An actor's mounts can change only while it is suspended. runsc cannot restore
+a checkpoint over a different set of mounts, so each snapshot records the
+mounts it was taken over, and the first resume after a change restores the
+actor's volumes, durable directories included, but not its memory or root
+filesystem. An actor with `volumeMounts` never starts from its template's
+golden snapshot.
 
 Currently, gVisor rejects non-empty sub-paths on `durableDir` volumes: its
 shared in-sandbox tmpfs cannot expose a selected subdirectory through the

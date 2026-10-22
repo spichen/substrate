@@ -2671,10 +2671,9 @@ type Container struct {
 	// may be mounted at multiple paths.
 	//
 	// +k8s:optional
-	// +k8s:maxItems=32 # matches the template's volume_mounts bound
+	// +k8s:maxItems=96 # the template's 32 volume_mounts plus the actor's 64
 	// +k8s:listType=map
 	// +k8s:listMapKey=mount_path
-	// +k8s:customValidation # mounts must not nest
 	VolumeMounts []*VolumeMount `protobuf:"bytes,6,rep,name=volume_mounts,json=volumeMounts,proto3" json:"volume_mounts,omitempty"`
 	// +k8s:optional
 	SecurityContext *SecurityContext `protobuf:"bytes,8,opt,name=security_context,json=securityContext,proto3" json:"security_context,omitempty"`

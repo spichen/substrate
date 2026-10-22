@@ -15,12 +15,14 @@
 package controlapi
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
 )
 
@@ -852,5 +854,115 @@ func TestWorkloadSpecGoldenOverSharedVolumes(t *testing.T) {
 	}
 	if diff := cmp.Diff(wantMounts, got.GetContainers()[0].GetVolumeMounts(), protocmp.Transform()); diff != "" {
 		t.Errorf("mounts mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestWorkloadSpecActorVolumeMounts(t *testing.T) {
+	template := &ateapipb.ActorTemplate{
+		Metadata: &ateapipb.ResourceMetadata{Atespace: "space-abc", Name: "tmpl1", Uid: "tmpl1-uid"},
+		Volumes: []*ateapipb.Volume{
+			{Name: "session", External: &ateapipb.ExternalVolumeSource{SharedVolume: &ateapipb.SharedVolumeRef{Name: "sessions"}}},
+			{Name: "skills", External: &ateapipb.ExternalVolumeSource{SharedVolume: &ateapipb.SharedVolumeRef{Name: "skills"}}},
+		},
+		Containers: []*ateapipb.Container{
+			{Name: "main", VolumeMounts: []*ateapipb.VolumeMount{{Name: "session", MountPath: "/app"}}},
+			{Name: "sidecar"},
+		},
+	}
+	actor := &ateapipb.Actor{
+		Metadata:             &ateapipb.ResourceMetadata{Atespace: "space-abc", Name: "session-1"},
+		SharedVolumeSubPaths: map[string]string{"session": "tenant-a/s1"},
+		VolumeMounts: []*ateapipb.ActorVolumeMount{
+			{Container: "main", VolumeMount: &ateapipb.VolumeMount{Name: "session", MountPath: "/app/history", SubPath: "history", ReadOnly: true}},
+			{Container: "main", VolumeMount: &ateapipb.VolumeMount{Name: "skills", MountPath: "/app/skills/pdf", SubPath: "global/pdf", ReadOnly: true}},
+		},
+		Status: &ateapipb.ActorStatus{ExternalVolumes: []*ateapipb.ExternalVolume{
+			{Name: "session", SharedVolumeName: "sessions", StorageVolumeId: "disk-sessions", VolumeType: "nfs.csi.k8s.io"},
+			{Name: "skills", SharedVolumeName: "skills", StorageVolumeId: "disk-skills", VolumeType: "nfs.csi.k8s.io"},
+		}},
+	}
+
+	got, err := workloadSpecFromActorTemplate(template, actor, nil)
+	if err != nil {
+		t.Fatalf("workloadSpecFromActorTemplate: %v", err)
+	}
+	wantMain := []*ateletpb.VolumeMount{
+		{Name: "session", MountPath: "/app", SubPath: "tenant-a/s1"},
+		{Name: "session", MountPath: "/app/history", SubPath: "tenant-a/s1/history", ReadOnly: true},
+		{Name: "skills", MountPath: "/app/skills/pdf", SubPath: "global/pdf", ReadOnly: true},
+	}
+	if diff := cmp.Diff(wantMain, got.GetContainers()[0].GetVolumeMounts(), protocmp.Transform()); diff != "" {
+		t.Errorf("main mounts mismatch (-want +got):\n%s", diff)
+	}
+	if mounts := got.GetContainers()[1].GetVolumeMounts(); len(mounts) != 0 {
+		t.Errorf("sidecar mounts = %v, want none", mounts)
+	}
+	var names []string
+	for _, vol := range got.GetVolumes() {
+		names = append(names, vol.GetName())
+	}
+	if want := []string{"session", "skills"}; !slices.Equal(names, want) {
+		t.Errorf("volumes = %v, want %v: a volume only the actor mounts must still be attached", names, want)
+	}
+}
+
+func TestValidateActorVolumeMounts(t *testing.T) {
+	template := &ateapipb.ActorTemplate{
+		Volumes: []*ateapipb.Volume{
+			{Name: "session", External: &ateapipb.ExternalVolumeSource{SharedVolume: &ateapipb.SharedVolumeRef{Name: "sessions"}}},
+			{Name: "data", DurableDir: &ateapipb.DurableDirVolumeSource{}},
+		},
+		Containers: []*ateapipb.Container{{Name: "main", VolumeMounts: []*ateapipb.VolumeMount{{Name: "session", MountPath: "/app"}}}},
+	}
+	mount := func(container, volume, path, sub string) *ateapipb.ActorVolumeMount {
+		return &ateapipb.ActorVolumeMount{Container: container, VolumeMount: &ateapipb.VolumeMount{Name: volume, MountPath: path, SubPath: sub}}
+	}
+	for _, tc := range []struct {
+		name    string
+		mounts  []*ateapipb.ActorVolumeMount
+		root    string
+		wantErr string
+	}{
+		{name: "nested under a template mount", mounts: []*ateapipb.ActorVolumeMount{mount("main", "session", "/app/history", "history")}},
+		{name: "unknown container", mounts: []*ateapipb.ActorVolumeMount{mount("other", "session", "/x", "")}, wantErr: "is not a container of the template"},
+		{name: "not a shared volume", mounts: []*ateapipb.ActorVolumeMount{mount("main", "data", "/x", "")}, wantErr: "does not name an external.shared_volume"},
+		{name: "path the template mounts", mounts: []*ateapipb.ActorVolumeMount{mount("main", "session", "/app", "x")}, wantErr: "is already mounted in container"},
+		{name: "path twice", mounts: []*ateapipb.ActorVolumeMount{mount("main", "session", "/x", "a"), mount("main", "session", "/x", "b")}, wantErr: "is already mounted in container"},
+		{name: "escapes the actor root", root: "tenant-a/s1", mounts: []*ateapipb.ActorVolumeMount{mount("main", "session", "/x", "../s2")}, wantErr: "joined with the actor's root"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			actor := &ateapipb.Actor{VolumeMounts: tc.mounts}
+			if tc.root != "" {
+				actor.SharedVolumeSubPaths = map[string]string{"session": tc.root}
+			}
+			err := validateActorVolumeMounts(actor, template)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("validateActorVolumeMounts = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("validateActorVolumeMounts = %v, want an error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMountsChangedSince(t *testing.T) {
+	actor := &ateapipb.Actor{VolumeMounts: []*ateapipb.ActorVolumeMount{
+		{Container: "main", VolumeMount: &ateapipb.VolumeMount{Name: "session", MountPath: "/app/history", SubPath: "history", ReadOnly: true}},
+	}}
+	taken := &ateapipb.Snapshot{VolumeMountsDigest: volumeMountsDigest(actor)}
+	if mountsChangedSince(taken, actor) {
+		t.Error("a snapshot taken over the actor's mounts reports them changed")
+	}
+	if !mountsChangedSince(&ateapipb.Snapshot{}, actor) {
+		t.Error("a snapshot taken before the actor had mounts reports them unchanged")
+	}
+	changed := proto.CloneOf(actor)
+	changed.VolumeMounts[0].VolumeMount.ReadOnly = false
+	if !mountsChangedSince(taken, changed) {
+		t.Error("a mount turned writable is not a change")
+	}
+	if mountsChangedSince(&ateapipb.Snapshot{}, &ateapipb.Actor{}) {
+		t.Error("an actor without mounts differs from a snapshot without a digest")
 	}
 }

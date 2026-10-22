@@ -269,6 +269,12 @@ func (f *FakeAteletServer) Terminate(ctx context.Context, req *ateletpb.Terminat
 	return &ateletpb.TerminateResponse{}, nil
 }
 
+func (f *FakeAteletServer) lastRunRequest() *ateletpb.RunRequest {
+	f.Lock.Lock()
+	defer f.Lock.Unlock()
+	return f.RunRequest
+}
+
 func (f *FakeAteletServer) lastRestoreRequest() *ateletpb.RestoreRequest {
 	f.Lock.Lock()
 	defer f.Lock.Unlock()
