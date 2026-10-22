@@ -1026,10 +1026,6 @@ func Validate_Container(
 			if earlyReturn {
 				return // do not proceed
 			}
-			// custom validation
-			if e := ValidateCustom_Container_VolumeMounts(ctx, op, fldPath, obj, oldObj); len(e) != 0 {
-				errs = append(errs, e...)
-			}
 			// lists with map semantics require unique keys
 			if e := validate.PtrSliceUnique(ctx, op, fldPath, obj, oldObj,
 				func(a *ateletpb.VolumeMount, b *ateletpb.VolumeMount) bool { return a.MountPath == b.MountPath }); len(e) != 0 {

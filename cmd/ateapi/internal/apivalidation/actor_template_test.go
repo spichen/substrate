@@ -434,14 +434,13 @@ func TestValidateActorTemplate(t *testing.T) {
 		},
 		want: field.ErrorList{field.Duplicate(field.NewPath("containers").Index(0).Child("volume_mounts").Index(1), nil)},
 	}, {
-		name: "nested mount paths are rejected",
+		name: "nested mount paths are allowed",
 		mutate: func(tmpl *ateapipb.ActorTemplate) {
 			tmpl.Containers[0].VolumeMounts = []*ateapipb.VolumeMount{
 				{Name: "data", MountPath: "/data"},
 				{Name: "config", MountPath: "/data/config"},
 			}
 		},
-		want: field.ErrorList{field.Invalid(field.NewPath("containers").Index(0).Child("volume_mounts").Index(1).Child("mount_path"), nil, "")},
 	}, {
 		name: "the same path in different containers is allowed",
 		mutate: func(tmpl *ateapipb.ActorTemplate) {

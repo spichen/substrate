@@ -17,11 +17,14 @@
 package ocispec
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"go.ate.dev/substrate/internal/nodepath"
@@ -158,16 +161,10 @@ func Build(o Options) *specs.Spec {
 		},
 	}
 
-	// Mount order across volume kinds does not matter: the API rejects mounts
-	// that nest under one another.
-	bind := func(dest, src, mode string) {
-		spec.Mounts = append(spec.Mounts, specs.Mount{
-			Destination: dest,
-			Type:        "bind",
-			Source:      src,
-			Options:     []string{"bind", mode},
-		})
-	}
+	// Mounts may nest. A parent is mounted before any mount under it, so the
+	// child's mount point is created in the parent's view rather than hidden
+	// beneath it.
+	var binds []specs.Mount
 	for i, v := range volumeBinds(o) {
 		src := v.source
 		if v.mount.GetSubPath() != "" {
@@ -177,10 +174,24 @@ func Build(o Options) *specs.Spec {
 		if v.readOnly {
 			mode = "ro"
 		}
-		bind(v.mount.GetMountPath(), src, mode)
+		binds = append(binds, specs.Mount{
+			Destination: v.mount.GetMountPath(),
+			Type:        "bind",
+			Source:      src,
+			Options:     []string{"bind", mode},
+		})
 	}
+	slices.SortStableFunc(binds, func(a, b specs.Mount) int {
+		return cmp.Compare(mountDepth(a.Destination), mountDepth(b.Destination))
+	})
+	spec.Mounts = append(spec.Mounts, binds...)
 
 	return spec
+}
+
+// mountDepth is the number of path segments in a clean absolute mount path.
+func mountDepth(p string) int {
+	return strings.Count(strings.Trim(p, "/"), "/")
 }
 
 // Save writes spec as the OCI spec of the bundle at bundlePath.

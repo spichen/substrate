@@ -119,9 +119,7 @@ func ValidateCustom_Container(_ context.Context, _ operation.Operation, fldPath 
 
 	var errs field.ErrorList
 	firstList := make(map[string]string, len(mounts))
-	paths := make([]string, len(mounts))
-	for i, m := range mounts {
-		paths[i] = m.path
+	for _, m := range mounts {
 		if m.path == "" {
 			continue
 		}
@@ -133,7 +131,7 @@ func ValidateCustom_Container(_ context.Context, _ operation.Operation, fldPath 
 		}
 		firstList[m.path] = m.list
 	}
-	return append(errs, resources.ValidateNestedMountPathsAt(paths, func(i int) *field.Path { return mounts[i].fld })...)
+	return errs
 }
 
 // ValidateCustom_ActorDirs holds every directory to an absolute, clean path.

@@ -1913,9 +1913,8 @@ func TestValidateContainer(t *testing.T) {
 			obj:  valid(func(c *ateletpb.Container) { c.VolumeMounts[1].MountPath = "/data" }),
 			want: field.ErrorList{field.Duplicate(field.NewPath("volume_mounts").Index(1), nil)},
 		}, {
-			name: "nested mount paths",
+			name: "nested mount paths are allowed",
 			obj:  valid(func(c *ateletpb.Container) { c.VolumeMounts[1].MountPath = "/data/nested" }),
-			want: field.ErrorList{field.Invalid(field.NewPath("volume_mounts").Index(1).Child("mount_path"), nil, "")},
 		}, {
 			name: "mount: missing name",
 			obj:  mount("", "/var/data"),

@@ -268,7 +268,7 @@ root. Otherwise it must be a clean relative Unix path of at most 16 segments,
 with no empty, `.` or `..` segment and no NUL. Symlinks in the selected path are
 rejected by the workers.
 
-The same volume can appear at several distinct, non-nested `mountPath` values:
+The same volume can appear at several distinct `mountPath` values, and a mount can nest under another: the parent is mounted first and the child's mount point is created in it, so the parent must be writable or already contain that directory.
 
 ```yaml
 volumeMounts:

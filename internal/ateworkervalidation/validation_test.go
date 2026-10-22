@@ -482,23 +482,20 @@ func TestValidateContainer(t *testing.T) {
 		obj:  valid(func(c *ateworkerpb.Container) { c.ImageVolumeMounts[0].MountPath = "/" + strings.Repeat("x", 4096) }),
 		want: field.ErrorList{field.TooLong(field.NewPath("image_volume_mounts").Index(0).Child("mount_path"), nil, 4096).WithOrigin("maxLength")},
 	}, {
-		name: "external mount nested under another in its list",
+		name: "external mount may nest under another in its list",
 		obj: valid(func(c *ateworkerpb.Container) {
 			c.ExternalVolumeMounts = append(c.ExternalVolumeMounts, &ateworkerpb.VolumeMount{Name: "ext-2", MountPath: "/ext/inner"})
 		}),
-		want: field.ErrorList{field.Invalid(field.NewPath("external_volume_mounts").Index(1).Child("mount_path"), nil, "")},
 	}, {
-		name: "system-info mount nested under an external mount",
+		name: "system-info mount may nest under an external mount",
 		obj: valid(func(c *ateworkerpb.Container) {
 			c.SystemInfoVolumeMounts = append(c.SystemInfoVolumeMounts, &ateworkerpb.VolumeMount{Name: "sysinfo-2", MountPath: "/ext/inner"})
 		}),
-		want: field.ErrorList{field.Invalid(field.NewPath("system_info_volume_mounts").Index(1).Child("mount_path"), nil, "")},
 	}, {
-		name: "image mount nested over a system-info mount",
+		name: "image mount may nest over a system-info mount",
 		obj: valid(func(c *ateworkerpb.Container) {
 			c.ImageVolumeMounts = append(c.ImageVolumeMounts, &ateworkerpb.VolumeMount{Name: "etc", MountPath: "/etc"})
 		}),
-		want: field.ErrorList{field.Invalid(field.NewPath("image_volume_mounts").Index(1).Child("mount_path"), nil, "")},
 	}, {
 		name: "same mount path in two lists",
 		obj: valid(func(c *ateworkerpb.Container) {

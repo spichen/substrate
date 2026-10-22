@@ -782,7 +782,6 @@ message Container {
   // +k8s:maxItems=32 # matches the template's volume_mounts bound
   // +k8s:listType=map
   // +k8s:listMapKey=mount_path
-  // +k8s:customValidation # mounts must not nest
   repeated VolumeMount volume_mounts = 6;
 
   // +k8s:optional

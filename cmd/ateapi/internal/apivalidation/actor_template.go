@@ -105,16 +105,6 @@ func ValidateCustom_VolumeMount_MountPath(_ context.Context, _ operation.Operati
 	return resources.ValidateMountPath(fldPath, *value)
 }
 
-// ValidateCustom_Container_VolumeMounts rejects mounts that nest under one
-// another. Mount-path uniqueness is enforced by the list key.
-func ValidateCustom_Container_VolumeMounts(_ context.Context, _ operation.Operation, fldPath *field.Path, value, _ []*ateapipb.VolumeMount) field.ErrorList {
-	paths := make([]string, len(value))
-	for i, m := range value {
-		paths[i] = m.GetMountPath()
-	}
-	return resources.ValidateNestedMountPaths(fldPath, paths)
-}
-
 func ValidateCustom_ActorMetadataItem_Path(_ context.Context, _ operation.Operation, fldPath *field.Path, value, _ *string) field.ErrorList {
 	return resources.ValidateProjectedPath(fldPath, *value)
 }
