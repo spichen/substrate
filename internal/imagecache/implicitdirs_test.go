@@ -161,3 +161,40 @@ func TestApplyDirFixups_SkipsShadowedPaths(t *testing.T) {
 		t.Errorf("non-directory was chmodded: %v (expected %v)", fi.Mode().Perm(), expectedMode)
 	}
 }
+
+func TestRootFixupTakesTheTopLayerRoot(t *testing.T) {
+	base := t.TempDir()
+	var layers []string
+	for i, mode := range []os.FileMode{0o700, 0o755} {
+		layer := filepath.Join(base, "layer", string(rune('a'+i)))
+		if err := os.MkdirAll(filepath.Join(layer, layerFSDirName), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(layer, layerFSDirName), mode); err != nil {
+			t.Fatal(err)
+		}
+		layers = append(layers, layer)
+	}
+	merged := filepath.Join(base, "rootfs")
+	if err := os.Mkdir(merged, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	fixup, err := resolveRootFixup(layers)
+	if err != nil {
+		t.Fatalf("resolveRootFixup: %v", err)
+	}
+	if fixup.Path != "." || fixup.Mode != 0o755 {
+		t.Fatalf("fixup = %+v, want path \".\" mode 0755", fixup)
+	}
+	if err := applyDirFixups(merged, []dirFixup{fixup}); err != nil {
+		t.Fatalf("applyDirFixups: %v", err)
+	}
+	fi, err := os.Stat(merged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o755 {
+		t.Fatalf("merged root mode = %o, want 755", got)
+	}
+}
